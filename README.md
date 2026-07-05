@@ -1,6 +1,7 @@
 # Pattern Studio
 
 Last Updated: 2026-07-05
+Repository: https://github.com/ebenitez1/pattern-studio (private)
 
 Cross-platform app for analyzing and interactively following Perler bead and cross-stitch patterns. Upload a pattern image or PDF; the backend detects the grid and recognizes symbols; then follow along cell-by-cell on web or mobile with progress tracking, filtering, stats, and exports.
 
@@ -71,3 +72,4 @@ If you change `shared-core`, run `npm run build` there again (or `npm run build:
 ## Changelog
 
 - 2026-07-05 — Initial build: monorepo scaffolded; shared-core written and typechecked; backend, web, and mobile implemented.
+- 2026-07-05 — Pushed to GitHub as private repo `ebenitez1/pattern-studio`.
