@@ -1,0 +1,12 @@
+{
+  "name": "pattern-studio",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Perler bead / cross-stitch pattern analyzer and interactive tracker (web + mobile + FastAPI backend)",
+  "scripts": {
+    "build:core": "npm --prefix shared-core run build",
+    "dev:web": "npm --prefix web run dev",
+    "start:mobile": "npm --prefix mobile run start",
+    "backend": "python -m uvicorn app.main:app --reload --port 8000 --app-dir backend"
+  }
+}

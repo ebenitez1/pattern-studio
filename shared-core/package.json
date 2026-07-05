@@ -1,0 +1,25 @@
+{
+  "name": "@pattern-studio/core",
+  "version": "0.1.0",
+  "description": "Shared business logic, API client, types and state for Pattern Studio web + mobile",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "source": "src/index.ts",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "zustand": "^4.5.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}
