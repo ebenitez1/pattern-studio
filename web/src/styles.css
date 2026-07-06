@@ -651,6 +651,21 @@ textarea.input {
   margin: 0;
 }
 
+.dropzone-ocr {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+  max-width: 380px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.dropzone-ocr input {
+  flex: 0 0 auto;
+}
+
 .dropzone-progress {
   display: flex;
   flex-direction: column;

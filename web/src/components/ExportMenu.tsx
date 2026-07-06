@@ -1,12 +1,10 @@
 import { useState } from "react";
 import {
-  buildExportRequest,
-  EXPORT_MIME,
   exportFileName,
   useProjectStore,
   type ExportFormat,
 } from "@pattern-studio/core";
-import { apiClient } from "../api";
+import { exportLocal } from "../processing/localExport";
 
 const FORMATS: ExportFormat[] = ["png", "csv", "pdf"];
 
@@ -20,20 +18,19 @@ export function ExportMenu() {
     return <p className="panel-empty">Open a project to export.</p>;
   }
 
-  const jobId = project.job_id;
-
   const doExport = async (format: ExportFormat) => {
-    if (!jobId || busy) return;
+    if (busy) return;
     setBusy(format);
     setError(null);
     try {
-      const req = buildExportRequest(format, filter, project.progress);
-      const blob = await apiClient.export(jobId, req);
-      const typed =
-        blob.type === EXPORT_MIME[format]
-          ? blob
-          : new Blob([blob], { type: EXPORT_MIME[format] });
-      const url = URL.createObjectURL(typed);
+      const blob = await exportLocal(
+        format,
+        project.grid,
+        project.name,
+        filter,
+        project.progress,
+      );
+      const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = exportFileName(project.name, format);
@@ -56,19 +53,13 @@ export function ExportMenu() {
             key={f}
             type="button"
             className="btn"
-            disabled={!jobId || busy !== null}
+            disabled={busy !== null}
             onClick={() => void doExport(f)}
           >
             {busy === f ? "Exporting…" : f.toUpperCase()}
           </button>
         ))}
       </div>
-      {!jobId && (
-        <p className="panel-note">
-          This project has no backend job attached, so server exports are
-          unavailable.
-        </p>
-      )}
       {error && <p className="panel-error">{error}</p>}
       <p className="panel-note">
         Exports respect the current filter (Show Only selection, Hide

@@ -2,7 +2,7 @@
 
 Last Updated: 2026-07-05
 Repository: https://github.com/ebenitez1/pattern-studio (public)
-Web app (GitHub Pages): https://ebenitez1.github.io/pattern-studio/ — uploads require the FastAPI backend running locally on :8000; saved projects live in the browser's IndexedDB
+Web app (GitHub Pages): https://ebenitez1.github.io/pattern-studio/ — fully self-contained, no backend required. All image processing runs in the browser via WebAssembly (opencv.js); projects live in the browser's IndexedDB.
 
 Cross-platform app for analyzing and interactively following Perler bead and cross-stitch patterns. Upload a pattern image or PDF; the backend detects the grid and recognizes symbols; then follow along cell-by-cell on web or mobile with progress tracking, filtering, stats, and exports.
 
@@ -62,6 +62,34 @@ On a physical device set the backend URL in the app's settings (Projects tab) to
 
 If you change `shared-core`, run `npm run build` there again (or `npm run build:core` from the repo root) so web/mobile pick up the new `dist/`.
 
+## Web: in-browser processing (no backend)
+
+The **web app processes patterns entirely client-side** so it runs as a pure
+static site on GitHub Pages with nothing to host. The pipeline mirrors the
+backend's stages, in the browser:
+
+- `web/src/processing/loadImage.ts` — File/PDF → ImageData (pdf.js for PDFs)
+- `web/src/processing/grid.ts` — opencv.js (`@techstark/opencv-js`) adaptive
+  threshold + morphological line masks + projection peaks, with an
+  autocorrelation pitch fallback for patterns without drawn grid lines
+- `web/src/processing/symbols.ts` — per-cell perceptual hash + color, clustered
+  into symbols via shared-core `clusterCells`
+- `web/src/processing/ocr.ts` — optional tesseract.js (off by default; pulls
+  ~15MB the first time)
+- `web/src/processing/localExport.ts` — PNG (canvas), CSV, PDF (jsPDF), no server
+
+Symbol recognition is **shape + color aware** (`shared-core/src/logic/phash.ts`):
+cells are the same symbol only when both their perceptual hash and dominant
+color agree, so color-coded patterns (same cell shape, different color) and
+glyph-coded patterns (same background, different symbol) both resolve correctly.
+
+The opencv.js WASM (~14MB, ~3.9MB gzipped) is a lazy chunk — it only downloads
+when the user actually processes an image.
+
+**The FastAPI backend still exists** and is used by the mobile app; the web app
+no longer needs it. Porting the same in-browser pipeline to mobile (or a native
+module) is a future task.
+
 ## Future-ready hooks (designed in, not yet implemented)
 
 - **Color matching**: `PatternSymbol.color_name` / `color_code` are already in the model (null today); a backend stage can fill them from a Perler/DMC table and search already matches on them.
@@ -76,4 +104,5 @@ If you change `shared-core`, run `npm run build` there again (or `npm run build:
 - 2026-07-05 — Pushed to GitHub as private repo `ebenitez1/pattern-studio`.
 - 2026-07-05 — Made repo public; added GitHub Pages deploy workflow for the web app (relative Vite base).
 - 2026-07-05 — Fixed "Illegal invocation" bug: shared-core API client now binds global `fetch` to `globalThis` (calling it as `this.fetchFn(...)` rebound `this` and browsers rejected it; Node/undici didn't catch it). Also affected mobile.
-- 2026-07-05 — Verified full pipeline against the live local backend (upload → poll → result → PNG/CSV/PDF export all 200). Note: the hosted Pages site can browse/track saved projects offline, but **uploading requires the FastAPI backend running locally on :8000** — otherwise the upload panel shows "Failed to fetch". Start it with `.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000` from `backend\`.
+- 2026-07-05 — Verified full pipeline against the live local backend (upload → poll → result → PNG/CSV/PDF export all 200).
+- 2026-07-05 — **Web app moved to fully in-browser processing (WASM)** so the Pages site needs no backend at all. Added shared-core color-aware perceptual-hash clustering; web `processing/` modules (opencv.js grid detection, pdf.js, optional tesseract.js OCR, canvas/jsPDF export). Verified in a real browser: synthetic 8×10 / 3-color pattern → detected 8×10, 3 symbols, correct colors; PNG + CSV exports correct. Two bugs found and fixed during verification: (1) morphological line kernel too short → filled symbols mistaken for grid lines (3× over-segmentation), fixed by requiring near-full-span lines; (2) phash ignored color → color-coded patterns collapsed to one symbol, fixed by making clustering shape+color aware.

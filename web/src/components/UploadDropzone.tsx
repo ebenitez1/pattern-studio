@@ -1,11 +1,11 @@
 /**
- * Drag-and-drop / file-picker upload. Uploads to the backend, polls the job
- * with a progress UI, then creates a local project (with a canvas-generated
- * thumbnail) from the resulting grid.
+ * Drag-and-drop / file-picker upload. Processes the pattern entirely in the
+ * browser (no backend) with a progress UI, then creates a local project (with
+ * a canvas-generated thumbnail) from the resulting grid.
  */
 import { useCallback, useRef, useState, type DragEvent } from "react";
-import { useProjectStore, type JobStatus } from "@pattern-studio/core";
-import { apiClient } from "../api";
+import { useProjectStore } from "@pattern-studio/core";
+import { processFile } from "../processing/localProcessor";
 import { gridThumbnailDataUrl } from "../lib/thumbnail";
 
 type Phase =
@@ -22,6 +22,7 @@ function projectNameFromFile(fileName: string): string {
 export function UploadDropzone({ onDone }: { onDone?: () => void }) {
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [dragOver, setDragOver] = useState(false);
+  const [ocr, setOcr] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const createProject = useProjectStore((s) => s.createProject);
 
@@ -30,32 +31,29 @@ export function UploadDropzone({ onDone }: { onDone?: () => void }) {
   const handleFile = useCallback(
     async (file: File) => {
       if (busy) return;
-      setPhase({ kind: "uploading", fileName: file.name });
+      setPhase({
+        kind: "processing",
+        fileName: file.name,
+        stage: "starting",
+        progress: 0,
+      });
       try {
-        const { job_id } = await apiClient.upload({
+        const grid = await processFile(
           file,
-          name: file.name,
-          type: file.type || "application/octet-stream",
-        });
-        setPhase({
-          kind: "processing",
-          fileName: file.name,
-          stage: "queued",
-          progress: 0,
-        });
-        const grid = await apiClient.waitForJob(job_id, (status: JobStatus) => {
-          setPhase({
-            kind: "processing",
-            fileName: file.name,
-            stage: status.stage || status.state,
-            progress: status.progress,
-          });
-        });
+          (p) =>
+            setPhase({
+              kind: "processing",
+              fileName: file.name,
+              stage: p.stage,
+              progress: p.progress,
+            }),
+          { ocr },
+        );
         const thumbnail = gridThumbnailDataUrl(grid);
         await createProject({
           name: projectNameFromFile(file.name),
           sourceFileName: file.name,
-          jobId: job_id,
+          jobId: null,
           grid,
           thumbnail,
         });
@@ -68,7 +66,7 @@ export function UploadDropzone({ onDone }: { onDone?: () => void }) {
         });
       }
     },
-    [busy, createProject, onDone],
+    [busy, createProject, onDone, ocr],
   );
 
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
@@ -104,7 +102,8 @@ export function UploadDropzone({ onDone }: { onDone?: () => void }) {
         <>
           <p className="dropzone-title">Drop a pattern image or PDF here</p>
           <p className="dropzone-sub">
-            The analyzer will detect the grid, symbols and colours.
+            Everything is analyzed in your browser — the grid, symbols and
+            colours are detected on-device, no upload.
           </p>
           <button
             type="button"
@@ -113,11 +112,20 @@ export function UploadDropzone({ onDone }: { onDone?: () => void }) {
           >
             Choose file…
           </button>
+          <label className="dropzone-ocr">
+            <input
+              type="checkbox"
+              checked={ocr}
+              onChange={(e) => setOcr(e.target.checked)}
+            />
+            Read letter/number labels (OCR) — slower, downloads ~15MB the first
+            time
+          </label>
         </>
       )}
 
       {phase.kind === "uploading" && (
-        <p className="dropzone-title">Uploading {phase.fileName}…</p>
+        <p className="dropzone-title">Preparing {phase.fileName}…</p>
       )}
 
       {phase.kind === "processing" && (
