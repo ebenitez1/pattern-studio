@@ -43,7 +43,13 @@ export class PatternApiClient {
 
   constructor(opts: ApiClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
-    this.fetchFn = opts.fetchFn ?? fetch;
+    // Browsers throw "Illegal invocation" if the global fetch is called with a
+    // `this` other than the global object. Storing it as a method and calling
+    // `this.fetchFn(...)` rebinds `this`, so bind it to the global here.
+    // A caller-supplied fetchFn is assumed to be already bound / self-contained.
+    const globalObj = typeof globalThis !== "undefined" ? globalThis : undefined;
+    this.fetchFn =
+      opts.fetchFn ?? (globalObj ? fetch.bind(globalObj) : fetch);
   }
 
   setBaseUrl(url: string): void {
