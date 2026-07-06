@@ -4,6 +4,7 @@ import { computeStats, useProjectStore, type PatternSymbol } from "@pattern-stud
 export function StatsPanel() {
   const project = useProjectStore((s) => s.project);
   const gridRevision = useProjectStore((s) => s.gridRevision);
+  const clearCompleted = useProjectStore((s) => s.clearCompleted);
 
   const stats = useMemo(() => {
     if (!project) return null;
@@ -61,6 +62,28 @@ export function StatsPanel() {
       >
         <div className="progress-bar-fill" style={{ width: `${pct}%` }} />
         <span className="progress-bar-label">{pct}%</span>
+      </div>
+
+      <div className="stats-actions">
+        <button
+          type="button"
+          className="btn btn-small"
+          disabled={stats.completed === 0}
+          onClick={() => {
+            if (
+              stats.completed > 0 &&
+              window.confirm(
+                `Clear all ${stats.completed} completed cell${
+                  stats.completed === 1 ? "" : "s"
+                }? This resets them to Not Started.`,
+              )
+            ) {
+              clearCompleted();
+            }
+          }}
+        >
+          Clear completed
+        </button>
       </div>
 
       <table className="stats-table">

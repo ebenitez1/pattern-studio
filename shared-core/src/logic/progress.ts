@@ -61,6 +61,21 @@ export function setCellStatus(
   return copy;
 }
 
+/**
+ * Remove every cell currently in `status` from the progress map (resetting it
+ * to not_started). Returns a new map. Used by "Clear completed".
+ */
+export function clearStatus(
+  progress: Record<string, CellProgress>,
+  status: CellStatus,
+): Record<string, CellProgress> {
+  const out: Record<string, CellProgress> = {};
+  for (const [key, p] of Object.entries(progress)) {
+    if (p.status !== status) out[key] = p;
+  }
+  return out;
+}
+
 /** Full statistics for the stats panel. O(cells). */
 export function computeStats(
   grid: GridData,

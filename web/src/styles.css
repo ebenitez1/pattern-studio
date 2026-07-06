@@ -200,6 +200,33 @@ textarea.input {
   padding: 4px 8px;
 }
 
+.segmented-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hl-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+.settings-row-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-sm);
+}
+
+.stats-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-sm);
+}
+
 /* ---- sidebar ---- */
 
 .sidebar {

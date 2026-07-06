@@ -19,9 +19,9 @@ export const colors = {
   statusSkipped: "#8e24aacc",
   statusNeedsReview: "#e65100cc",
 
-  // filter rendering
-  highlight: "#ffd60a", // bright yellow
-  highlightAlt: "#00e5ff", // colorblind-friendly alternative
+  // filter rendering — highlight is one of exactly two choices: yellow or purple
+  highlight: "#ffd60a", // bright yellow (default)
+  highlightAlt: "#b45cff", // purple alternative
   dimmed: "#55555588",
 
   gridLine: "#333842",
@@ -52,7 +52,7 @@ export interface AccessibilityPrefs {
   /** multiplier applied to symbol/cell render size */
   symbolScale: number;
   highContrast: boolean;
-  /** use the cyan highlight instead of yellow */
+  /** highlight colour: false = yellow (default), true = purple */
   colorblindHighlight: boolean;
 }
 

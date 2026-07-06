@@ -1,16 +1,19 @@
 import { useState } from "react";
 import {
   exportFileName,
+  highlightColor,
   useProjectStore,
   type ExportFormat,
 } from "@pattern-studio/core";
 import { exportLocal } from "../processing/localExport";
+import { useA11y } from "../a11y";
 
 const FORMATS: ExportFormat[] = ["png", "csv", "pdf"];
 
 export function ExportMenu() {
   const project = useProjectStore((s) => s.project);
   const filter = useProjectStore((s) => s.filter);
+  const { prefs } = useA11y();
   const [busy, setBusy] = useState<ExportFormat | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,6 +32,7 @@ export function ExportMenu() {
         project.name,
         filter,
         project.progress,
+        highlightColor(prefs),
       );
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

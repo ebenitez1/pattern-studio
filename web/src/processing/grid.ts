@@ -99,16 +99,25 @@ function uniformBoundaries(start: number, end: number, pitch: number): number[] 
   return out;
 }
 
-/** Content bounding box on an axis: first/last index with signal above noise. */
-function contentSpan(signal: Float64Array): [number, number] {
-  const n = signal.length;
+/**
+ * Content bounding span on an axis from a "non-white pixel count" projection:
+ * the first/last index whose count crosses a small fraction of the peak. This
+ * finds the outlined border of the actual pattern (a black border, or the first
+ * non-white cell) so the surrounding white margin is excluded — we only track
+ * cells inside it.
+ */
+export function contentSpanFromCounts(counts: Float64Array): [number, number] {
+  const n = counts.length;
+  if (n === 0) return [0, 0];
   let max = 0;
-  for (let i = 0; i < n; i++) max = Math.max(max, signal[i]!);
-  const thr = max * 0.08;
+  for (let i = 0; i < n; i++) max = Math.max(max, counts[i]!);
+  // a border/content line lights up many pixels; pure white margin ~0
+  const thr = Math.max(1, max * 0.06);
   let lo = 0;
-  while (lo < n && signal[lo]! <= thr) lo++;
+  while (lo < n && counts[lo]! < thr) lo++;
   let hi = n - 1;
-  while (hi > lo && signal[hi]! <= thr) hi--;
+  while (hi > lo && counts[hi]! < thr) hi--;
+  if (lo >= hi) return [0, n - 1];
   return [lo, hi];
 }
 
@@ -116,27 +125,33 @@ function axisBoundaries(
   lineProjection: Float64Array,
   contentProjection: Float64Array,
   length: number,
+  span: [number, number],
 ): number[] {
+  const [lo, hi] = span;
+  const clamp = (v: number) => Math.min(hi, Math.max(lo, v));
   // expect at least a few cells; minGap keeps us from splitting one line into many
   const minGap = Math.max(6, Math.floor(length / 300));
-  const peaks = findPeaks(lineProjection, minGap);
+  // only consider grid lines inside the outlined border
+  const peaks = findPeaks(lineProjection, minGap).filter(
+    (p) => p >= lo && p <= hi,
+  );
 
   if (peaks.length >= 3) {
-    // ensure the outer edges are represented
-    const [lo, hi] = contentSpan(contentProjection);
     const bounds = [...peaks];
-    if (bounds[0]! - lo > minGap * 2) bounds.unshift(lo);
-    if (hi - bounds[bounds.length - 1]! > minGap * 2) bounds.push(hi);
-    return bounds;
+    // ensure the border edges themselves are boundaries
+    if (bounds[0]! - lo > minGap) bounds.unshift(lo);
+    if (hi - bounds[bounds.length - 1]! > minGap) bounds.push(hi);
+    return bounds.map(clamp);
   }
 
-  // fallback: estimate cell pitch from the content variation profile
-  const [lo, hi] = contentSpan(contentProjection);
-  const span = hi - lo;
+  // fallback: estimate cell pitch from the content variation profile, within
+  // the border only
+  const inner = contentProjection.slice(lo, hi + 1);
+  const spanLen = hi - lo;
   const pitch = estimatePitch(
-    contentProjection.slice(lo, hi + 1),
+    inner,
     Math.max(6, Math.floor(length / 200)),
-    Math.max(12, Math.floor(span / 3)),
+    Math.max(12, Math.floor(spanLen / 3)),
   );
   if (pitch && pitch > 0) return uniformBoundaries(lo, hi, pitch);
 
@@ -197,39 +212,57 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
     const horizData = horiz.data; // Uint8 length w*h
     const vertData = vert.data;
     const gradData = grad.data32F; // Float32 length w*h
+    const rgba = imageData.data; // Uint8Clamped length w*h*4
 
     // row line strength = sum of horizontal-mask across each row
     const rowLine = new Float64Array(height);
     const rowGrad = new Float64Array(height);
+    const rowNonWhite = new Float64Array(height);
     // col line strength = sum of vertical-mask down each column
     const colLine = new Float64Array(width);
     const colGrad = new Float64Array(width);
+    const colNonWhite = new Float64Array(width);
+
+    // a pixel is "content" (part of the border/pattern) if it isn't near-white
+    const isContent = (i: number): boolean =>
+      rgba[i]! < 235 || rgba[i + 1]! < 235 || rgba[i + 2]! < 235;
 
     for (let y = 0; y < height; y++) {
       let rl = 0;
       let rg = 0;
+      let rw = 0;
       const rowOff = y * width;
       for (let x = 0; x < width; x++) {
-        rl += horizData[rowOff + x]!;
-        rg += gradData[rowOff + x]!;
+        const off = rowOff + x;
+        rl += horizData[off]!;
+        rg += gradData[off]!;
+        if (isContent(off * 4)) rw++;
       }
       rowLine[y] = rl;
       rowGrad[y] = rg;
+      rowNonWhite[y] = rw;
     }
     for (let x = 0; x < width; x++) {
       let cl = 0;
       let cg = 0;
+      let cw = 0;
       for (let y = 0; y < height; y++) {
         const off = y * width + x;
         cl += vertData[off]!;
         cg += gradData[off]!;
+        if (isContent(off * 4)) cw++;
       }
       colLine[x] = cl;
       colGrad[x] = cg;
+      colNonWhite[x] = cw;
     }
 
-    const rowBoundaries = axisBoundaries(rowLine, rowGrad, height);
-    const colBoundaries = axisBoundaries(colLine, colGrad, width);
+    // crop to the outlined border (bounding box of non-white content)
+    const rowSpan = contentSpanFromCounts(rowNonWhite);
+    const colSpan = contentSpanFromCounts(colNonWhite);
+
+    const rowBoundaries = axisBoundaries(rowLine, rowGrad, height, rowSpan);
+    const colBoundaries = axisBoundaries(colLine, colGrad, width, colSpan);
 
     return { rowBoundaries, colBoundaries };
   } finally {

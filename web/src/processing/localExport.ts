@@ -23,6 +23,7 @@ function renderPngBlob(
   grid: GridData,
   filter: FilterState,
   progress: Record<string, CellProgress>,
+  highlightHex: string,
 ): Promise<Blob> {
   const w = grid.cols * CELL_PX;
   const h = grid.rows * CELL_PX;
@@ -54,7 +55,7 @@ function renderPngBlob(
       ctx.fillStyle = base;
       ctx.fillRect(x, y, CELL_PX, CELL_PX);
       if (state === "highlighted") {
-        ctx.strokeStyle = "#ffd60a";
+        ctx.strokeStyle = highlightHex;
         ctx.lineWidth = 3;
         ctx.strokeRect(x + 1.5, y + 1.5, CELL_PX - 3, CELL_PX - 3);
       }
@@ -172,6 +173,7 @@ export async function exportLocal(
   name: string,
   filter: FilterState,
   progress: Record<string, CellProgress>,
+  highlightHex = "#ffd60a",
 ): Promise<Blob> {
   if (format === "csv") {
     return new Blob([buildBeadCountCsv(grid, progress)], {
@@ -179,7 +181,7 @@ export async function exportLocal(
     });
   }
   if (format === "png") {
-    return renderPngBlob(grid, filter, progress);
+    return renderPngBlob(grid, filter, progress, highlightHex);
   }
   return renderPdfBlob(grid, name, progress);
 }

@@ -67,16 +67,31 @@ export function SettingsPopover() {
             High contrast (stronger grid lines, pure white text)
           </label>
 
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={prefs.colorblindHighlight}
-              onChange={(e) =>
-                updatePrefs({ colorblindHighlight: e.target.checked })
-              }
-            />
-            Colorblind-friendly highlight (cyan instead of yellow)
-          </label>
+          <div className="settings-row settings-row-block">
+            <span>Highlight color</span>
+            <div className="segmented" role="radiogroup" aria-label="Highlight color">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={!prefs.colorblindHighlight}
+                className={`segmented-btn ${!prefs.colorblindHighlight ? "active" : ""}`}
+                onClick={() => updatePrefs({ colorblindHighlight: false })}
+              >
+                <span className="hl-swatch" style={{ background: "#ffd60a" }} />
+                Yellow
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={prefs.colorblindHighlight}
+                className={`segmented-btn ${prefs.colorblindHighlight ? "active" : ""}`}
+                onClick={() => updatePrefs({ colorblindHighlight: true })}
+              >
+                <span className="hl-swatch" style={{ background: "#b45cff" }} />
+                Purple
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

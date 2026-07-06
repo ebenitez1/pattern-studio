@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { getStorage } from "../storage";
-import { cycleCell, setCellStatus } from "../logic/progress";
+import { cycleCell, setCellStatus, clearStatus } from "../logic/progress";
 import { toggleSymbolSelection } from "../logic/filters";
 import {
   DEFAULT_FILTER,
@@ -43,6 +43,8 @@ export interface ProjectStore {
   // -- progress -----------------------------------------------------------
   cycleCell: (row: number, col: number) => void;
   setCellStatus: (row: number, col: number, status: CellStatus) => void;
+  /** reset every completed cell back to not_started */
+  clearCompleted: () => void;
 
   // -- viewer -------------------------------------------------------------
   viewport: Viewport;
@@ -175,6 +177,17 @@ export const useProjectStore = create<ProjectStore>()(
       const p = get().project;
       if (!p) return;
       const progress = setCellStatus(p.progress, row, col, status, Date.now());
+      set({
+        project: { ...p, progress },
+        gridRevision: get().gridRevision + 1,
+      });
+      scheduleAutosave(get);
+    },
+
+    clearCompleted: () => {
+      const p = get().project;
+      if (!p) return;
+      const progress = clearStatus(p.progress, "completed");
       set({
         project: { ...p, progress },
         gridRevision: get().gridRevision + 1,
