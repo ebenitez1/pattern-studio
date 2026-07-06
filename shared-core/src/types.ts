@@ -169,6 +169,13 @@ export interface ProjectSummary {
 
 export const cellKey = (row: number, col: number): string => `${row}:${col}`;
 
+/**
+ * Reserved symbol id for empty/background cells (no bead) inside the grid.
+ * These cells keep the grid dense (row-major rows*cols) but are not tracked,
+ * counted, or listed as a symbol.
+ */
+export const BACKGROUND_SYMBOL_ID = "bg";
+
 export interface SymbolStats {
   symbol_id: string;
   total: number;

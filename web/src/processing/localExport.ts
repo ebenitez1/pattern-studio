@@ -4,6 +4,7 @@
  * the user's progress, matching the on-screen viewer.
  */
 import {
+  BACKGROUND_SYMBOL_ID,
   buildBeadCountCsv,
   cellRenderStateFast,
   computeStats,
@@ -40,6 +41,7 @@ function renderPngBlob(
   const selected = selectedIdSet(filter);
 
   for (const cell of grid.cells) {
+    if (cell.symbol_id === BACKGROUND_SYMBOL_ID) continue;
     const state = cellRenderStateFast(cell, filter, selected, progress);
     if (state === "hidden") continue;
     const x = cell.col * CELL_PX;

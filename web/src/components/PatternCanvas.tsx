@@ -10,6 +10,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
+  BACKGROUND_SYMBOL_ID,
   cellRenderStateFast,
   cellKey,
   colors,
@@ -124,6 +125,8 @@ export function PatternCanvas() {
       for (let c = c0; c <= c1; c++) {
         const cell: GridCell | undefined = grid.cells[rowBase + c];
         if (!cell) continue;
+        // background/empty cells render as bare grid squares
+        if (cell.symbol_id === BACKGROUND_SYMBOL_ID) continue;
 
         const renderState = cellRenderStateFast(cell, filter, selIds, progress);
         if (renderState === "hidden") continue;
@@ -472,7 +475,11 @@ export function PatternCanvas() {
       const col = Math.floor((pos.x - s.viewport.offsetX) / cellPx);
       const row = Math.floor((pos.y - s.viewport.offsetY) / cellPx);
       if (row >= 0 && row < p.grid.rows && col >= 0 && col < p.grid.cols) {
-        s.cycleCell(row, col);
+        const cell = p.grid.cells[row * p.grid.cols + col];
+        // ignore clicks on empty/background cells — they aren't beads
+        if (cell && cell.symbol_id !== BACKGROUND_SYMBOL_ID) {
+          s.cycleCell(row, col);
+        }
       }
     }
   };

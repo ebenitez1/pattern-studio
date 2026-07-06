@@ -96,11 +96,13 @@ export function computeStats(
   let completed = 0;
   let skipped = 0;
   let needsReview = 0;
+  let total = 0; // only real (non-background) cells are tracked
 
   for (const cell of grid.cells) {
     const stats = perSymbol.get(cell.symbol_id);
-    if (!stats) continue;
+    if (!stats) continue; // background / untracked cells are skipped
     stats.total++;
+    total++;
     const status = progress[cellKey(cell.row, cell.col)]?.status ?? "not_started";
     if (status === "completed") {
       stats.completed++;
@@ -117,8 +119,6 @@ export function computeStats(
   for (const stats of perSymbol.values()) {
     stats.remaining = stats.total - stats.completed;
   }
-
-  const total = grid.cells.length;
   return {
     rows: grid.rows,
     cols: grid.cols,

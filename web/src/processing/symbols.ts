@@ -4,6 +4,7 @@
  * the app already consumes — identical shape to the backend's result.
  */
 import {
+  BACKGROUND_SYMBOL_ID,
   clusterCells,
   distanceToConfidence,
   perceptualHash,
@@ -18,6 +19,46 @@ import type { GridBoundaries } from "./grid";
 const HASH_SAMPLE = 24; // sample each cell into 24x24 gray for hashing
 const THUMB_SIZE = 48;
 const INSET = 0.16; // ignore the outer 16% of a cell (grid lines / borders)
+
+function isNearWhite(hex: string): boolean {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());
+  if (!m) return false;
+  const r = parseInt(m[1]!, 16);
+  const g = parseInt(m[2]!, 16);
+  const b = parseInt(m[3]!, 16);
+  return r > 225 && g > 225 && b > 225;
+}
+
+/**
+ * Fraction of dark ("ink") pixels in a cell's inset centre. Distinguishes a
+ * truly empty white cell (no ink) from a white *bead* cell that carries a
+ * printed code number (e.g. DMC B5200 snow white) — the latter has ink and
+ * must be tracked, not dropped as background.
+ */
+function inkFraction(
+  data: Uint8ClampedArray,
+  imgW: number,
+  region: CellRegion,
+): number {
+  const insetX = region.w * INSET;
+  const insetY = region.h * INSET;
+  const x0 = Math.floor(region.x + insetX);
+  const y0 = Math.floor(region.y + insetY);
+  const x1 = Math.ceil(region.x + region.w - insetX);
+  const y1 = Math.ceil(region.y + region.h - insetY);
+  let dark = 0;
+  let n = 0;
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const idx = (y * imgW + x) * 4;
+      const lum =
+        0.299 * data[idx]! + 0.587 * data[idx + 1]! + 0.114 * data[idx + 2]!;
+      if (lum < 110) dark++;
+      n++;
+    }
+  }
+  return n === 0 ? 0 : dark / n;
+}
 
 interface CellRegion {
   row: number;
@@ -148,18 +189,35 @@ export function recognizeSymbols(
   const data = imageData.data;
   const { regions, rows, cols } = buildRegions(bounds);
 
-  // hash + colour every cell
-  const hashed: HashedCell[] = regions.map((region) => {
+  // hash + colour every cell, and flag empty/background cells (near-white with
+  // no printed ink). Only real (bead) cells are clustered and tracked;
+  // background cells keep the grid dense but carry the reserved id.
+  const hashed: HashedCell[] = [];
+  const isBackground: boolean[] = [];
+  for (const region of regions) {
     const gray = sampleGray(data, width, region, HASH_SAMPLE);
-    return {
+    const color = meanColor(data, width, region);
+    hashed.push({
       row: region.row,
       col: region.col,
       hash: perceptualHash(gray, HASH_SAMPLE, HASH_SAMPLE),
-      color: meanColor(data, width, region),
-    };
+      color,
+    });
+    isBackground.push(
+      isNearWhite(color) && inkFraction(data, width, region) < 0.006,
+    );
+  }
+
+  const contentRegionIdx: number[] = [];
+  const contentCells: HashedCell[] = [];
+  hashed.forEach((h, i) => {
+    if (!isBackground[i]) {
+      contentRegionIdx.push(i);
+      contentCells.push(h);
+    }
   });
 
-  const cluster = clusterCells(hashed, hashThreshold);
+  const cluster = clusterCells(contentCells, hashThreshold);
 
   // a canvas holding the full image so thumbnails can be cropped from it
   const fullCanvas = document.createElement("canvas");
@@ -167,24 +225,35 @@ export function recognizeSymbols(
   fullCanvas.height = imageData.height;
   fullCanvas.getContext("2d")?.putImageData(imageData, 0, 0);
 
+  // symbol id + confidence per region (background cells → reserved id)
+  const symbolByRegion = new Array<string>(regions.length).fill(
+    BACKGROUND_SYMBOL_ID,
+  );
+  const confByRegion = new Array<number>(regions.length).fill(1);
+  contentRegionIdx.forEach((regionIdx, ci) => {
+    symbolByRegion[regionIdx] = cluster.symbolIdByCell[ci]!;
+    confByRegion[regionIdx] = distanceToConfidence(cluster.distanceByCell[ci]!);
+  });
+
   const cells: GridCell[] = regions.map((region, i) => ({
     row: region.row,
     col: region.col,
-    symbol_id: cluster.symbolIdByCell[i]!,
-    confidence: distanceToConfidence(cluster.distanceByCell[i]!),
+    symbol_id: symbolByRegion[i]!,
+    confidence: confByRegion[i]!,
   }));
 
   const representativeRegion: Record<string, CellRegion> = {};
   const symbols: PatternSymbol[] = Object.keys(cluster.counts)
     .map((id) => {
-      const repIdx = cluster.representativeCellIndex[id]!;
-      const region = regions[repIdx]!;
+      const contentRep = cluster.representativeCellIndex[id]!;
+      const regionIdx = contentRegionIdx[contentRep]!;
+      const region = regions[regionIdx]!;
       representativeRegion[id] = region;
       return {
         id,
         thumbnail: thumbnailDataUrl(fullCanvas, region),
         ocr_text: null,
-        dominant_color: hashed[repIdx]!.color,
+        dominant_color: hashed[regionIdx]!.color,
         color_name: null,
         color_code: null,
         count: cluster.counts[id]!,

@@ -1,10 +1,16 @@
 /**
- * Grid detection — mirrors the backend's OpenCV approach:
- *   adaptive threshold → morphological horizontal/vertical line masks →
- *   projection peaks → boundary positions, with an autocorrelation
- *   pitch-estimation fallback when a pattern has no drawn grid lines.
+ * Grid detection for real cross-stitch / Perler charts.
  *
- * Returns pixel boundary positions on each axis (R+1 rows, C+1 cols).
+ * Strategy (robust to filled cells, which broke the old "find long dark lines"
+ * approach — rows of dark cells masquerade as grid lines):
+ *   1. directional edge projections (|dx| per column, |dy| per row)
+ *   2. autocorrelation → uniform cell pitch (charts are perfectly periodic)
+ *   3. phase alignment → a comb of boundary positions
+ *   4. trim the comb to the contiguous run with real edge support, which
+ *      excludes the outside axis-number labels, the white margins and the
+ *      colour legend below the grid
+ *
+ * Falls back to the old peak/pitch method if periodicity can't be found.
  */
 import { loadOpenCv } from "./opencv";
 import type { LoadedImage } from "./loadImage";
@@ -12,6 +18,19 @@ import type { LoadedImage } from "./loadImage";
 export interface GridBoundaries {
   rowBoundaries: number[]; // y pixel positions, ascending, length rows+1
   colBoundaries: number[]; // x pixel positions, ascending, length cols+1
+}
+
+/** Diagnostics for tuning; stashed on globalThis when detection runs. */
+export interface GridDebug {
+  width: number;
+  height: number;
+  pitchX: number | null;
+  pitchY: number | null;
+  cols: number;
+  rows: number;
+  colExtent: [number, number];
+  rowExtent: [number, number];
+  usedFallback: boolean;
 }
 
 // --- pure signal helpers (unit-testable, no opencv) -----------------------
@@ -47,7 +66,6 @@ export function findPeaks(
     }
   }
 
-  // merge candidates within minGap into their centroid
   const merged: number[] = [];
   let group: number[] = [];
   for (const c of candidates) {
@@ -64,13 +82,14 @@ export function findPeaks(
   return merged;
 }
 
-/** Dominant period of a signal via autocorrelation (for gridless patterns). */
+/** Dominant period of a signal via autocorrelation. */
 export function estimatePitch(
   signal: Float64Array,
   minPitch: number,
   maxPitch: number,
 ): number | null {
   const n = signal.length;
+  if (n < minPitch * 2) return null;
   let mean = 0;
   for (let i = 0; i < n; i++) mean += signal[i]!;
   mean /= n;
@@ -83,6 +102,8 @@ export function estimatePitch(
   for (let lag = minPitch; lag <= hi; lag++) {
     let acc = 0;
     for (let i = 0; i + lag < n; i++) acc += centered[i]! * centered[i + lag]!;
+    // normalise by overlap so long lags aren't penalised
+    acc /= n - lag;
     if (acc > bestScore) {
       bestScore = acc;
       bestLag = lag;
@@ -91,27 +112,12 @@ export function estimatePitch(
   return bestLag > 0 && bestScore > 0 ? bestLag : null;
 }
 
-/** Build uniform boundaries across [start,end] at the given pitch. */
-function uniformBoundaries(start: number, end: number, pitch: number): number[] {
-  const out: number[] = [];
-  for (let p = start; p <= end + 0.5; p += pitch) out.push(Math.round(p));
-  if (out.length === 0 || out[out.length - 1]! < end) out.push(end);
-  return out;
-}
-
-/**
- * Content bounding span on an axis from a "non-white pixel count" projection:
- * the first/last index whose count crosses a small fraction of the peak. This
- * finds the outlined border of the actual pattern (a black border, or the first
- * non-white cell) so the surrounding white margin is excluded — we only track
- * cells inside it.
- */
+/** Content bounding span from a non-white-count projection (fallback path). */
 export function contentSpanFromCounts(counts: Float64Array): [number, number] {
   const n = counts.length;
   if (n === 0) return [0, 0];
   let max = 0;
   for (let i = 0; i < n; i++) max = Math.max(max, counts[i]!);
-  // a border/content line lights up many pixels; pure white margin ~0
   const thr = Math.max(1, max * 0.06);
   let lo = 0;
   while (lo < n && counts[lo]! < thr) lo++;
@@ -121,42 +127,123 @@ export function contentSpanFromCounts(counts: Float64Array): [number, number] {
   return [lo, hi];
 }
 
-function axisBoundaries(
-  lineProjection: Float64Array,
-  contentProjection: Float64Array,
-  length: number,
-  span: [number, number],
-): number[] {
-  const [lo, hi] = span;
-  const clamp = (v: number) => Math.min(hi, Math.max(lo, v));
-  // expect at least a few cells; minGap keeps us from splitting one line into many
-  const minGap = Math.max(6, Math.floor(length / 300));
-  // only consider grid lines inside the outlined border
-  const peaks = findPeaks(lineProjection, minGap).filter(
-    (p) => p >= lo && p <= hi,
-  );
+function uniformBoundaries(start: number, end: number, pitch: number): number[] {
+  const out: number[] = [];
+  for (let p = start; p <= end + 0.5; p += pitch) out.push(Math.round(p));
+  if (out.length === 0 || out[out.length - 1]! < end) out.push(end);
+  return out;
+}
 
-  if (peaks.length >= 3) {
-    const bounds = [...peaks];
-    // ensure the border edges themselves are boundaries
-    if (bounds[0]! - lo > minGap) bounds.unshift(lo);
-    if (hi - bounds[bounds.length - 1]! > minGap) bounds.push(hi);
-    return bounds.map(clamp);
+/** Box-smooth a signal to stabilise autocorrelation/phase against noise. */
+function smooth(signal: Float64Array, radius: number): Float64Array {
+  if (radius <= 0) return signal;
+  const n = signal.length;
+  const out = new Float64Array(n);
+  let acc = 0;
+  for (let i = 0; i < Math.min(radius, n); i++) acc += signal[i]!;
+  for (let i = 0; i < n; i++) {
+    const add = i + radius;
+    const sub = i - radius - 1;
+    if (add < n) acc += signal[add]!;
+    if (sub >= 0) acc -= signal[sub]!;
+    const lo = Math.max(0, i - radius);
+    const hi = Math.min(n - 1, i + radius);
+    out[i] = acc / (hi - lo + 1);
+  }
+  return out;
+}
+
+/**
+ * Periodicity-based boundaries. Given a directional edge-strength projection,
+ * find the uniform cell pitch, align a comb of boundaries to the edges, and
+ * trim to the contiguous run with real support (dropping labels / legend /
+ * margins). Returns null if no clear periodicity.
+ */
+export function combBoundaries(
+  score: Float64Array,
+  length: number,
+): { boundaries: number[]; extent: [number, number]; pitch: number } | null {
+  const sm = smooth(score, 1);
+  const minPitch = Math.max(8, Math.floor(length / 200));
+  const maxPitch = Math.max(minPitch + 2, Math.floor(length / 4));
+  const pitch = estimatePitch(sm, minPitch, maxPitch);
+  if (!pitch) return null;
+
+  // best phase: comb sum over teeth, sampling a small window per tooth
+  const sampleAt = (p: number): number => {
+    const xi = Math.round(p);
+    let m = 0;
+    for (let d = -1; d <= 1; d++) {
+      const j = xi + d;
+      if (j >= 0 && j < length) m = Math.max(m, sm[j]!);
+    }
+    return m;
+  };
+
+  let bestPhase = 0;
+  let bestSum = -1;
+  for (let phase = 0; phase < pitch; phase++) {
+    let sum = 0;
+    for (let p = phase; p < length; p += pitch) sum += sampleAt(p);
+    if (sum > bestSum) {
+      bestSum = sum;
+      bestPhase = phase;
+    }
   }
 
-  // fallback: estimate cell pitch from the content variation profile, within
-  // the border only
-  const inner = contentProjection.slice(lo, hi + 1);
-  const spanLen = hi - lo;
-  const pitch = estimatePitch(
-    inner,
-    Math.max(6, Math.floor(length / 200)),
-    Math.max(12, Math.floor(spanLen / 3)),
-  );
-  if (pitch && pitch > 0) return uniformBoundaries(lo, hi, pitch);
+  // teeth + their support
+  const teeth: number[] = [];
+  const support: number[] = [];
+  for (let p = bestPhase; p <= length; p += pitch) {
+    teeth.push(Math.round(p));
+    support.push(sampleAt(p));
+  }
+  if (teeth.length < 3) return null;
 
-  // last resort: assume a single cell spanning the content
-  return [lo, hi];
+  const sorted = [...support].sort((a, b) => a - b);
+  const maxS = sorted[sorted.length - 1]!;
+  const thr = maxS * 0.16;
+
+  // longest contiguous run of supported teeth, bridging single weak gaps
+  let bestStart = 0;
+  let bestEnd = 0;
+  let i = 0;
+  while (i < teeth.length) {
+    if (support[i]! < thr) {
+      i++;
+      continue;
+    }
+    let j = i;
+    let gap = 0;
+    let last = i;
+    while (j + 1 < teeth.length) {
+      if (support[j + 1]! >= thr) {
+        j++;
+        last = j;
+        gap = 0;
+      } else if (gap === 0 && j + 2 < teeth.length && support[j + 2]! >= thr) {
+        // bridge a single weak interior tooth (same-colour neighbours)
+        j += 2;
+        last = j;
+        gap = 0;
+      } else {
+        break;
+      }
+    }
+    if (last - i > bestEnd - bestStart) {
+      bestStart = i;
+      bestEnd = last;
+    }
+    i = j + 1;
+  }
+
+  if (bestEnd - bestStart < 2) return null;
+  const boundaries = teeth.slice(bestStart, bestEnd + 1);
+  return {
+    boundaries,
+    extent: [boundaries[0]!, boundaries[boundaries.length - 1]!],
+    pitch,
+  };
 }
 
 // --- opencv-backed detection ---------------------------------------------
@@ -167,112 +254,105 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
 
   const src = cv.matFromImageData(imageData);
   const gray = new cv.Mat();
-  const binary = new cv.Mat();
-  const horiz = new cv.Mat();
-  const vert = new cv.Mat();
-  const grad = new cv.Mat();
   const gradX = new cv.Mat();
   const gradY = new cv.Mat();
 
   try {
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-
-    // binary where features/lines are white
-    cv.adaptiveThreshold(
-      gray,
-      binary,
-      255,
-      cv.ADAPTIVE_THRESH_MEAN_C,
-      cv.THRESH_BINARY_INV,
-      Math.max(11, (Math.floor(Math.min(width, height) / 40) | 1)),
-      5,
-    );
-
-    // Horizontal line mask. The kernel must be long enough that only lines
-    // spanning a large fraction of the image survive the morphological open —
-    // otherwise a filled symbol's horizontal chord is mistaken for a grid line
-    // and splits one real cell into several. A true grid line runs (nearly) the
-    // full width; no symbol does.
-    const hSize = Math.max(15, Math.floor(width * 0.33));
-    const hKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(hSize, 1));
-    cv.morphologyEx(binary, horiz, cv.MORPH_OPEN, hKernel);
-    hKernel.delete();
-
-    // vertical line mask (same reasoning, full-height lines only)
-    const vSize = Math.max(15, Math.floor(height * 0.33));
-    const vKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, vSize));
-    cv.morphologyEx(binary, vert, cv.MORPH_OPEN, vKernel);
-    vKernel.delete();
-
-    // gradient magnitude (for the gridless-pattern fallback projections)
+    // directional gradients: |dx| marks vertical edges, |dy| horizontal edges
     cv.Sobel(gray, gradX, cv.CV_32F, 1, 0, 3);
     cv.Sobel(gray, gradY, cv.CV_32F, 0, 1, 3);
-    cv.magnitude(gradX, gradY, grad);
+    const dx = gradX.data32F;
+    const dy = gradY.data32F;
+    const rgba = imageData.data;
 
-    const horizData = horiz.data; // Uint8 length w*h
-    const vertData = vert.data;
-    const gradData = grad.data32F; // Float32 length w*h
-    const rgba = imageData.data; // Uint8Clamped length w*h*4
-
-    // row line strength = sum of horizontal-mask across each row
-    const rowLine = new Float64Array(height);
-    const rowGrad = new Float64Array(height);
-    const rowNonWhite = new Float64Array(height);
-    // col line strength = sum of vertical-mask down each column
-    const colLine = new Float64Array(width);
-    const colGrad = new Float64Array(width);
+    const colScore = new Float64Array(width); // vertical-edge strength / column
+    const rowScore = new Float64Array(height); // horizontal-edge strength / row
     const colNonWhite = new Float64Array(width);
-
-    // a pixel is "content" (part of the border/pattern) if it isn't near-white
-    const isContent = (i: number): boolean =>
-      rgba[i]! < 235 || rgba[i + 1]! < 235 || rgba[i + 2]! < 235;
+    const rowNonWhite = new Float64Array(height);
 
     for (let y = 0; y < height; y++) {
-      let rl = 0;
-      let rg = 0;
-      let rw = 0;
       const rowOff = y * width;
+      let rs = 0;
+      let rw = 0;
       for (let x = 0; x < width; x++) {
         const off = rowOff + x;
-        rl += horizData[off]!;
-        rg += gradData[off]!;
-        if (isContent(off * 4)) rw++;
+        const ax = Math.abs(dx[off]!);
+        const ay = Math.abs(dy[off]!);
+        colScore[x] = colScore[x]! + ax;
+        rs += ay;
+        const p = off * 4;
+        if (rgba[p]! < 235 || rgba[p + 1]! < 235 || rgba[p + 2]! < 235) {
+          rw++;
+          colNonWhite[x] = colNonWhite[x]! + 1;
+        }
       }
-      rowLine[y] = rl;
-      rowGrad[y] = rg;
+      rowScore[y] = rs;
       rowNonWhite[y] = rw;
     }
-    for (let x = 0; x < width; x++) {
-      let cl = 0;
-      let cg = 0;
-      let cw = 0;
-      for (let y = 0; y < height; y++) {
-        const off = y * width + x;
-        cl += vertData[off]!;
-        cg += gradData[off]!;
-        if (isContent(off * 4)) cw++;
-      }
-      colLine[x] = cl;
-      colGrad[x] = cg;
-      colNonWhite[x] = cw;
+
+    const colResult = combBoundaries(colScore, width);
+    const rowResult = combBoundaries(rowScore, height);
+
+    let colBoundaries: number[];
+    let rowBoundaries: number[];
+    let usedFallback = false;
+
+    if (colResult && colResult.boundaries.length >= 3) {
+      colBoundaries = colResult.boundaries;
+    } else {
+      usedFallback = true;
+      colBoundaries = fallbackAxis(colScore, colNonWhite, width);
+    }
+    if (rowResult && rowResult.boundaries.length >= 3) {
+      rowBoundaries = rowResult.boundaries;
+    } else {
+      usedFallback = true;
+      rowBoundaries = fallbackAxis(rowScore, rowNonWhite, height);
     }
 
-    // crop to the outlined border (bounding box of non-white content)
-    const rowSpan = contentSpanFromCounts(rowNonWhite);
-    const colSpan = contentSpanFromCounts(colNonWhite);
-
-    const rowBoundaries = axisBoundaries(rowLine, rowGrad, height, rowSpan);
-    const colBoundaries = axisBoundaries(colLine, colGrad, width, colSpan);
+    const debug: GridDebug = {
+      width,
+      height,
+      pitchX: colResult?.pitch ?? null,
+      pitchY: rowResult?.pitch ?? null,
+      cols: colBoundaries.length - 1,
+      rows: rowBoundaries.length - 1,
+      colExtent: colResult?.extent ?? [
+        colBoundaries[0]!,
+        colBoundaries[colBoundaries.length - 1]!,
+      ],
+      rowExtent: rowResult?.extent ?? [
+        rowBoundaries[0]!,
+        rowBoundaries[rowBoundaries.length - 1]!,
+      ],
+      usedFallback,
+    };
+    (globalThis as unknown as { __PS_GRID_DEBUG__?: GridDebug }).__PS_GRID_DEBUG__ =
+      debug;
 
     return { rowBoundaries, colBoundaries };
   } finally {
     src.delete();
     gray.delete();
-    binary.delete();
-    horiz.delete();
-    vert.delete();
-    grad.delete();
     gradX.delete();
     gradY.delete();
   }
+}
+
+/** Fallback when periodicity fails: crop to non-white span, uniform pitch. */
+function fallbackAxis(
+  score: Float64Array,
+  nonWhite: Float64Array,
+  length: number,
+): number[] {
+  const [lo, hi] = contentSpanFromCounts(nonWhite);
+  const span = hi - lo;
+  const pitch = estimatePitch(
+    score.slice(lo, hi + 1),
+    Math.max(6, Math.floor(length / 200)),
+    Math.max(12, Math.floor(span / 3)),
+  );
+  if (pitch && pitch > 0) return uniformBoundaries(lo, hi, pitch);
+  return [lo, hi];
 }

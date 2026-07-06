@@ -164,6 +164,7 @@ export function clusterCells(
   cells: HashedCell[],
   hashThreshold = 10,
   colorThreshold = 45,
+  strongColorThreshold = 20,
 ): ClusterResult {
   const clusters: Cluster[] = [];
   const clusterOfCell: number[] = new Array(cells.length);
@@ -175,15 +176,19 @@ export function clusterCells(
     let best = -1;
     let bestDist = Infinity;
     for (let c = 0; c < clusters.length; c++) {
-      const d = hammingDistance(hash, clusters[c]!.repHash);
-      if (d > hashThreshold) continue;
       const [r, g, b] = clusters[c]!.repRgb;
       const cd = Math.sqrt(
         (rgb[0] - r) ** 2 + (rgb[1] - g) ** 2 + (rgb[2] - b) ** 2,
       );
       if (cd > colorThreshold) continue;
-      // rank by combined closeness so the nearest matching cluster wins
-      const score = d + cd / 8;
+      const d = hammingDistance(hash, clusters[c]!.repHash);
+      // Same symbol when the colour is (near) identical OR the shape matches.
+      // Colour-dominant so a colour-coded chart merges same-colour cells even
+      // when print/JPEG noise perturbs the shape hash; shape still separates
+      // different glyphs that share a similar background colour.
+      const matches = cd <= strongColorThreshold || d <= hashThreshold;
+      if (!matches) continue;
+      const score = cd + d; // rank by combined closeness; colour weighted
       if (score < bestDist) {
         bestDist = score;
         best = c;
