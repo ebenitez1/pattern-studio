@@ -75,3 +75,5 @@ If you change `shared-core`, run `npm run build` there again (or `npm run build:
 - 2026-07-05 — Initial build: monorepo scaffolded; shared-core written and typechecked; backend, web, and mobile implemented.
 - 2026-07-05 — Pushed to GitHub as private repo `ebenitez1/pattern-studio`.
 - 2026-07-05 — Made repo public; added GitHub Pages deploy workflow for the web app (relative Vite base).
+- 2026-07-05 — Fixed "Illegal invocation" bug: shared-core API client now binds global `fetch` to `globalThis` (calling it as `this.fetchFn(...)` rebound `this` and browsers rejected it; Node/undici didn't catch it). Also affected mobile.
+- 2026-07-05 — Verified full pipeline against the live local backend (upload → poll → result → PNG/CSV/PDF export all 200). Note: the hosted Pages site can browse/track saved projects offline, but **uploading requires the FastAPI backend running locally on :8000** — otherwise the upload panel shows "Failed to fetch". Start it with `.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000` from `backend\`.
