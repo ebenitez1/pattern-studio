@@ -266,8 +266,13 @@ function longestTrueRun(a: boolean[]): [number, number] {
   return [bs, be < bs ? bs : be];
 }
 
-/** Fraction of a cell's inset centre that is "bead" (coloured or dark), i.e.
- *  not the light/desaturated background (white or grey/white checkerboard). */
+/**
+ * Fraction of a cell's inset centre that is a real "bead" pixel: clearly
+ * saturated (a colour) OR clearly dark. This excludes the light/desaturated
+ * backgrounds — white, grey/white checkerboard, AND the pale colour tints some
+ * charts use behind their axis-number labels (e.g. lavender) — so label bands
+ * don't get mistaken for grid content.
+ */
 function cellBeadFraction(
   rgba: Uint8ClampedArray,
   imgW: number,
@@ -295,6 +300,144 @@ function cellBeadFraction(
     }
   }
   return n === 0 ? 0 : bead / n;
+}
+
+function cellMeanRgb(
+  rgba: Uint8ClampedArray,
+  imgW: number,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+): [number, number, number] {
+  const ix0 = Math.floor(x0 + (x1 - x0) * 0.25);
+  const iy0 = Math.floor(y0 + (y1 - y0) * 0.25);
+  const ix1 = Math.ceil(x1 - (x1 - x0) * 0.25);
+  const iy1 = Math.ceil(y1 - (y1 - y0) * 0.25);
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let n = 0;
+  for (let y = iy0; y < iy1; y++) {
+    for (let x = ix0; x < ix1; x++) {
+      const p = (y * imgW + x) * 4;
+      r += rgba[p]!;
+      g += rgba[p + 1]!;
+      b += rgba[p + 2]!;
+      n++;
+    }
+  }
+  if (n === 0) return [0, 0, 0];
+  return [r / n, g / n, b / n];
+}
+
+/** A line of cell colours is "uniform" if almost all cells cluster near one
+ *  colour — the signature of an axis-number label band (all cells share one
+ *  tint, with only the centred digit varying), unlike a real grid row which
+ *  mixes bead colours and empty cells. */
+function isUniformLine(colors: [number, number, number][]): boolean {
+  if (colors.length < 4) return false;
+  let cr = 0;
+  let cg = 0;
+  let cb = 0;
+  for (const [r, g, b] of colors) {
+    cr += r;
+    cg += g;
+    cb += b;
+  }
+  const n = colors.length;
+  cr /= n;
+  cg /= n;
+  cb /= n;
+  let within = 0;
+  for (const [r, g, b] of colors) {
+    const d = Math.sqrt((r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2);
+    if (d < 40) within++;
+  }
+  return within / n >= 0.92;
+}
+
+function centroid(
+  cells: [number, number, number][],
+): [number, number, number] {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  for (const c of cells) {
+    r += c[0];
+    g += c[1];
+    b += c[2];
+  }
+  const n = Math.max(1, cells.length);
+  return [r / n, g / n, b / n];
+}
+
+/**
+ * Strip outer rows/cols that are uniform-coloured axis-label bands (e.g.
+ * periwinkle number strips). These look like beads pixel-for-pixel, so two
+ * tests are required: the edge is (a) uniform in colour AND (b) that colour is
+ * essentially absent from the grid interior. A real solid bead edge fails (b) —
+ * its colour recurs inside — so it's kept. One strip per side (labels are a
+ * single row/col).
+ */
+export function stripUniformEdges(
+  colTeeth: number[],
+  rowTeeth: number[],
+  rgba: Uint8ClampedArray,
+  imgW: number,
+): { colTeeth: number[]; rowTeeth: number[] } {
+  const nc = colTeeth.length - 1;
+  const nr = rowTeeth.length - 1;
+  if (nc < 6 || nr < 6) return { colTeeth, rowTeeth };
+
+  const color: [number, number, number][][] = [];
+  for (let r = 0; r < nr; r++) {
+    color[r] = [];
+    for (let c = 0; c < nc; c++) {
+      color[r]![c] = cellMeanRgb(
+        rgba,
+        imgW,
+        colTeeth[c]!,
+        rowTeeth[r]!,
+        colTeeth[c + 1]!,
+        rowTeeth[r + 1]!,
+      );
+    }
+  }
+
+  // how many interior (non-border-ring) cells match a colour
+  const interiorMatches = (col: [number, number, number]): number => {
+    let cnt = 0;
+    for (let r = 1; r < nr - 1; r++) {
+      for (let c = 1; c < nc - 1; c++) {
+        const cc = color[r]![c]!;
+        const d = Math.sqrt(
+          (cc[0] - col[0]) ** 2 + (cc[1] - col[1]) ** 2 + (cc[2] - col[2]) ** 2,
+        );
+        if (d < 22) cnt++;
+      }
+    }
+    return cnt;
+  };
+  // A label band's tint is at most sparse in the interior (even if it happens
+  // to equal a rare bead colour); a real solid bead edge's colour recurs
+  // densely inside. Threshold on interior density, not an absolute count.
+  const interiorTol = Math.max(3, Math.floor(0.025 * (nr - 2) * (nc - 2)));
+  const isLabelBand = (cells: [number, number, number][]): boolean =>
+    isUniformLine(cells) && interiorMatches(centroid(cells)) <= interiorTol;
+
+  const topCells = color[0]!;
+  const botCells = color[nr - 1]!;
+  const leftCells = color.map((row) => row[0]!);
+  const rightCells = color.map((row) => row[nc - 1]!);
+
+  let ct = colTeeth.slice();
+  let rt = rowTeeth.slice();
+  if (isLabelBand(topCells)) rt = rt.slice(1);
+  if (isLabelBand(botCells)) rt = rt.slice(0, -1);
+  if (isLabelBand(leftCells)) ct = ct.slice(1);
+  if (isLabelBand(rightCells)) ct = ct.slice(0, -1);
+  return { colTeeth: ct, rowTeeth: rt };
 }
 
 /**
@@ -405,8 +548,15 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
         rgba,
         width,
       );
-      colBoundaries = trimmed.colTeeth;
-      rowBoundaries = trimmed.rowTeeth;
+      // strip uniform-coloured axis-label bands (e.g. periwinkle number strips)
+      const stripped = stripUniformEdges(
+        trimmed.colTeeth,
+        trimmed.rowTeeth,
+        rgba,
+        width,
+      );
+      colBoundaries = stripped.colTeeth;
+      rowBoundaries = stripped.rowTeeth;
     } else {
       usedFallback = true;
       colBoundaries = colResult?.teeth ?? fallbackAxis(colScore, colNonWhite, width);
