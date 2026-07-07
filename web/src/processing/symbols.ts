@@ -124,8 +124,16 @@ function sampleGray(
   return out;
 }
 
-/** Mean colour of a cell's inset centre as #rrggbb. */
-function meanColor(
+const to2 = (v: number) => Math.round(v).toString(16).padStart(2, "0");
+
+/**
+ * Dominant colour of a cell's inset centre as #rrggbb, by MODE not mean. Pixels
+ * are quantised into coarse colour buckets; the most populous bucket wins and
+ * its member pixels are averaged. This ignores the minority pixels from thin
+ * grid lines and slight boundary overlap that a plain mean would blend into a
+ * muddy grey — important for fine grids where cells are only a few pixels.
+ */
+function dominantColor(
   data: Uint8ClampedArray,
   imgW: number,
   region: CellRegion,
@@ -136,25 +144,39 @@ function meanColor(
   const y0 = Math.floor(region.y + insetY);
   const x1 = Math.ceil(region.x + region.w - insetX);
   const y1 = Math.ceil(region.y + region.h - insetY);
-  let r = 0;
-  let g = 0;
-  let b = 0;
-  let n = 0;
+
+  const counts = new Map<number, number>();
+  const sums = new Map<number, [number, number, number]>();
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) {
       const idx = (y * imgW + x) * 4;
-      r += data[idx]!;
-      g += data[idx + 1]!;
-      b += data[idx + 2]!;
-      n++;
+      const r = data[idx]!;
+      const g = data[idx + 1]!;
+      const b = data[idx + 2]!;
+      const key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4); // 16 levels/chan
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+      const s = sums.get(key);
+      if (s) {
+        s[0] += r;
+        s[1] += g;
+        s[2] += b;
+      } else {
+        sums.set(key, [r, g, b]);
+      }
     }
   }
-  if (n === 0) return "#000000";
-  const to2 = (v: number) =>
-    Math.round(v / n)
-      .toString(16)
-      .padStart(2, "0");
-  return `#${to2(r)}${to2(g)}${to2(b)}`;
+  let bestKey = -1;
+  let bestCount = 0;
+  for (const [k, c] of counts) {
+    if (c > bestCount) {
+      bestCount = c;
+      bestKey = k;
+    }
+  }
+  if (bestKey < 0) return "#000000";
+  const s = sums.get(bestKey)!;
+  const c = counts.get(bestKey)!;
+  return `#${to2(s[0] / c)}${to2(s[1] / c)}${to2(s[2] / c)}`;
 }
 
 function thumbnailDataUrl(
@@ -181,6 +203,84 @@ function thumbnailDataUrl(
   return canvas.toDataURL("image/png");
 }
 
+/** Largest enclosed empty region (in cells) still treated as design rather
+ *  than background — small enclosed empties are highlights (e.g. eyes); larger
+ *  enclosed empties are negative space and should be stripped. */
+const MAX_HIGHLIGHT_REGION = 5;
+
+/**
+ * Decide which empty cells are background. A cell is background if it is an
+ * empty candidate AND either (a) connected (4-way) to the grid border through
+ * other empty candidates — the surrounding background — or (b) part of a large
+ * enclosed empty region (negative space inside the figure's silhouette). Small
+ * enclosed empties (highlights the design intends to keep) are NOT background.
+ */
+function computeBackground(
+  isBgCandidate: boolean[],
+  rows: number,
+  cols: number,
+): boolean[] {
+  const n = rows * cols;
+  const bg = new Array<boolean>(n).fill(false);
+
+  // (a) flood-fill exterior background from the border
+  const stack: number[] = [];
+  const pushExt = (r: number, c: number) => {
+    if (r < 0 || c < 0 || r >= rows || c >= cols) return;
+    const i = r * cols + c;
+    if (isBgCandidate[i] && !bg[i]) {
+      bg[i] = true;
+      stack.push(i);
+    }
+  };
+  for (let c = 0; c < cols; c++) {
+    pushExt(0, c);
+    pushExt(rows - 1, c);
+  }
+  for (let r = 0; r < rows; r++) {
+    pushExt(r, 0);
+    pushExt(r, cols - 1);
+  }
+  while (stack.length) {
+    const i = stack.pop()!;
+    const r = Math.floor(i / cols);
+    const c = i % cols;
+    pushExt(r - 1, c);
+    pushExt(r + 1, c);
+    pushExt(r, c - 1);
+    pushExt(r, c + 1);
+  }
+
+  // (b) enclosed empty regions: strip large ones (negative space), keep small
+  const visited = bg.slice();
+  for (let start = 0; start < n; start++) {
+    if (!isBgCandidate[start] || visited[start]) continue;
+    const comp: number[] = [];
+    const s = [start];
+    visited[start] = true;
+    while (s.length) {
+      const i = s.pop()!;
+      comp.push(i);
+      const r = Math.floor(i / cols);
+      const c = i % cols;
+      const nbrs = [
+        r > 0 ? i - cols : -1,
+        r < rows - 1 ? i + cols : -1,
+        c > 0 ? i - 1 : -1,
+        c < cols - 1 ? i + 1 : -1,
+      ];
+      for (const k of nbrs) {
+        if (k >= 0 && isBgCandidate[k] && !visited[k]) {
+          visited[k] = true;
+          s.push(k);
+        }
+      }
+    }
+    if (comp.length > MAX_HIGHLIGHT_REGION) for (const j of comp) bg[j] = true;
+  }
+  return bg;
+}
+
 export interface RecognizedGrid {
   grid: GridData;
   /** representative cell region per symbol id — used later for OCR crops */
@@ -203,7 +303,7 @@ export function recognizeSymbols(
   const isBackground: boolean[] = [];
   for (const region of regions) {
     const gray = sampleGray(data, width, region, HASH_SAMPLE);
-    const color = meanColor(data, width, region);
+    const color = dominantColor(data, width, region);
     hashed.push({
       row: region.row,
       col: region.col,
@@ -215,10 +315,15 @@ export function recognizeSymbols(
     );
   }
 
+  // Only cells that are empty AND reachable from the grid border are true
+  // background. Empty cells enclosed by the design (e.g. white eye highlights
+  // inside the figure) are not reachable, so they stay as real tracked cells.
+  const exteriorBg = computeBackground(isBackground, rows, cols);
+
   const contentRegionIdx: number[] = [];
   const contentCells: HashedCell[] = [];
   hashed.forEach((h, i) => {
-    if (!isBackground[i]) {
+    if (!exteriorBg[i]) {
       contentRegionIdx.push(i);
       contentCells.push(h);
     }

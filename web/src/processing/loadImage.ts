@@ -32,6 +32,10 @@ async function loadRasterImage(file: File | Blob): Promise<LoadedImage> {
   canvas.height = h;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) throw new Error("2D canvas context unavailable");
+  // Composite over white so a transparent PNG background reads as white (empty)
+  // rather than black — otherwise transparent areas become dark "beads".
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, w, h);
   ctx.drawImage(bitmap, 0, 0, w, h);
   bitmap.close();
   return { imageData: canvasToImageData(canvas), width: w, height: h };
