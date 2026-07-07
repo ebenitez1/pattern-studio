@@ -82,12 +82,41 @@ export function findPeaks(
   return merged;
 }
 
+/** Best-phase average edge strength of a pitch-P comb — high when every tooth
+ *  lands on a real grid line (P is the cell pitch or a multiple of it), low for
+ *  a sub-cell pitch whose teeth fall between lines. Used to verify a candidate. */
+function combAverage(signal: Float64Array, P: number): number {
+  const n = signal.length;
+  const sampleMax = (pos: number): number => {
+    const xi = Math.round(pos);
+    let m = 0;
+    for (let dd = -1; dd <= 1; dd++) {
+      const j = xi + dd;
+      if (j >= 0 && j < n && signal[j]! > m) m = signal[j]!;
+    }
+    return m;
+  };
+  let best = 0;
+  const phaseStep = P > 40 ? Math.ceil(P / 40) : 1;
+  for (let phase = 0; phase < P; phase += phaseStep) {
+    let s = 0;
+    let cnt = 0;
+    for (let pos = phase; pos < n; pos += P) {
+      s += sampleMax(pos);
+      cnt++;
+    }
+    if (cnt > 0) best = Math.max(best, s / cnt);
+  }
+  return best;
+}
+
 /**
- * Fundamental period of a signal via autocorrelation. Returns the FIRST strong
- * autocorrelation peak (the fundamental), not the global max — otherwise a
- * harmonic (2×/3× the true cell pitch) can win and the grid comes out with 1/3
- * the columns. Raw (un-normalised) autocorrelation is used so the score decays
- * with lag, keeping the fundamental dominant over its harmonics.
+ * Fundamental cell pitch. Autocorrelation gives a robust ballpark pitch L (the
+ * first prominent peak), but on sparse fine grids it can lock onto a 2×/3×
+ * harmonic (chunky result). So we then comb-verify sub-multiples of L: if L/2
+ * or L/3 is still a valid pitch (its comb lands on real lines nearly as well as
+ * L's), that finer value is the true fundamental. A genuine coarse chart fails
+ * the check (a half-pitch comb falls between lines) and keeps L.
  */
 export function estimatePitch(
   signal: Float64Array,
@@ -115,31 +144,31 @@ export function estimatePitch(
   }
   if (globalMax <= 0) return null;
 
-  // Skip the monotonic decay away from lag 0 (descend to the first local min)...
+  // autocorrelation ballpark: first prominent local-max after the initial decay
   let lag = minPitch;
   while (lag < hi && r[lag + 1]! < r[lag]!) lag++;
-  // ...then return the first local maximum that is prominent (a real period),
-  // which is the fundamental. Harmonics are later, weaker peaks.
+  let L = -1;
   const prominence = globalMax * 0.5;
   for (; lag < hi; lag++) {
-    if (
-      r[lag]! >= prominence &&
-      r[lag]! >= r[lag - 1]! &&
-      r[lag]! >= r[lag + 1]!
-    ) {
-      return lag;
+    if (r[lag]! >= prominence && r[lag]! >= r[lag - 1]! && r[lag]! >= r[lag + 1]!) {
+      L = lag;
+      break;
     }
   }
-  // fallback: the global-max lag
-  let bestLag = minPitch;
-  let best = -Infinity;
-  for (let l = minPitch; l <= hi; l++) {
-    if (r[l]! > best) {
-      best = r[l]!;
-      bestLag = l;
+  if (L < 0) {
+    for (let l = minPitch; l <= hi; l++) if (r[l]! > (L < 0 ? -1 : r[L]!)) L = l;
+  }
+  if (L < minPitch) return null;
+
+  // comb-verify finer sub-multiples: take the smallest whose comb still aligns
+  const baseAvg = combAverage(signal, L);
+  for (let k = 4; k >= 2; k--) {
+    const sub = Math.round(L / k);
+    if (sub >= minPitch && combAverage(signal, sub) >= 0.8 * baseAvg) {
+      return sub;
     }
   }
-  return bestLag;
+  return L;
 }
 
 /** Content bounding span from a non-white-count projection (fallback path). */
@@ -200,7 +229,10 @@ export function combBoundaries(
   support: number[];
 } | null {
   const sm = smooth(score, 1);
-  const minPitch = Math.max(8, Math.floor(length / 200));
+  // Cap resolution at ~130 cells/axis: excludes sub-cell texture (e.g. a fine
+  // checkerboard background) on large scans, while small images still allow a
+  // few-pixel cell pitch.
+  const minPitch = Math.max(5, Math.floor(length / 130));
   const maxPitch = Math.max(minPitch + 2, Math.floor(length / 4));
   const pitch = estimatePitch(sm, minPitch, maxPitch);
   if (!pitch) return null;
