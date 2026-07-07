@@ -82,7 +82,13 @@ export function findPeaks(
   return merged;
 }
 
-/** Dominant period of a signal via autocorrelation. */
+/**
+ * Fundamental period of a signal via autocorrelation. Returns the FIRST strong
+ * autocorrelation peak (the fundamental), not the global max — otherwise a
+ * harmonic (2×/3× the true cell pitch) can win and the grid comes out with 1/3
+ * the columns. Raw (un-normalised) autocorrelation is used so the score decays
+ * with lag, keeping the fundamental dominant over its harmonics.
+ */
 export function estimatePitch(
   signal: Float64Array,
   minPitch: number,
@@ -96,20 +102,44 @@ export function estimatePitch(
   const centered = new Float64Array(n);
   for (let i = 0; i < n; i++) centered[i] = signal[i]! - mean;
 
-  let bestLag = -1;
-  let bestScore = -Infinity;
   const hi = Math.min(maxPitch, Math.floor(n / 2));
+  if (hi <= minPitch) return null;
+
+  const r = new Float64Array(hi + 1);
+  let globalMax = 0;
   for (let lag = minPitch; lag <= hi; lag++) {
     let acc = 0;
     for (let i = 0; i + lag < n; i++) acc += centered[i]! * centered[i + lag]!;
-    // normalise by overlap so long lags aren't penalised
-    acc /= n - lag;
-    if (acc > bestScore) {
-      bestScore = acc;
-      bestLag = lag;
+    r[lag] = acc;
+    if (acc > globalMax) globalMax = acc;
+  }
+  if (globalMax <= 0) return null;
+
+  // Skip the monotonic decay away from lag 0 (descend to the first local min)...
+  let lag = minPitch;
+  while (lag < hi && r[lag + 1]! < r[lag]!) lag++;
+  // ...then return the first local maximum that is prominent (a real period),
+  // which is the fundamental. Harmonics are later, weaker peaks.
+  const prominence = globalMax * 0.5;
+  for (; lag < hi; lag++) {
+    if (
+      r[lag]! >= prominence &&
+      r[lag]! >= r[lag - 1]! &&
+      r[lag]! >= r[lag + 1]!
+    ) {
+      return lag;
     }
   }
-  return bestLag > 0 && bestScore > 0 ? bestLag : null;
+  // fallback: the global-max lag
+  let bestLag = minPitch;
+  let best = -Infinity;
+  for (let l = minPitch; l <= hi; l++) {
+    if (r[l]! > best) {
+      best = r[l]!;
+      bestLag = l;
+    }
+  }
+  return bestLag;
 }
 
 /** Content bounding span from a non-white-count projection (fallback path). */
@@ -162,7 +192,13 @@ function smooth(signal: Float64Array, radius: number): Float64Array {
 export function combBoundaries(
   score: Float64Array,
   length: number,
-): { boundaries: number[]; extent: [number, number]; pitch: number } | null {
+): {
+  boundaries: number[];
+  extent: [number, number];
+  pitch: number;
+  teeth: number[];
+  support: number[];
+} | null {
   const sm = smooth(score, 1);
   const minPitch = Math.max(8, Math.floor(length / 200));
   const maxPitch = Math.max(minPitch + 2, Math.floor(length / 4));
@@ -191,7 +227,7 @@ export function combBoundaries(
     }
   }
 
-  // teeth + their support
+  // full comb of teeth across the whole axis (trimmed later by fill content)
   const teeth: number[] = [];
   const support: number[] = [];
   for (let p = bestPhase; p <= length; p += pitch) {
@@ -200,49 +236,110 @@ export function combBoundaries(
   }
   if (teeth.length < 3) return null;
 
-  const sorted = [...support].sort((a, b) => a - b);
-  const maxS = sorted[sorted.length - 1]!;
-  const thr = maxS * 0.16;
+  return {
+    boundaries: teeth,
+    extent: [teeth[0]!, teeth[teeth.length - 1]!],
+    pitch,
+    teeth,
+    support: support.map((s) => Math.round(s)),
+  };
+}
 
-  // longest contiguous run of supported teeth, bridging single weak gaps
-  let bestStart = 0;
-  let bestEnd = 0;
+/** Longest contiguous run of `true` in a boolean array → [start, end] indices. */
+function longestTrueRun(a: boolean[]): [number, number] {
+  let bs = 0;
+  let be = -1;
   let i = 0;
-  while (i < teeth.length) {
-    if (support[i]! < thr) {
+  while (i < a.length) {
+    if (!a[i]) {
       i++;
       continue;
     }
     let j = i;
-    let gap = 0;
-    let last = i;
-    while (j + 1 < teeth.length) {
-      if (support[j + 1]! >= thr) {
-        j++;
-        last = j;
-        gap = 0;
-      } else if (gap === 0 && j + 2 < teeth.length && support[j + 2]! >= thr) {
-        // bridge a single weak interior tooth (same-colour neighbours)
-        j += 2;
-        last = j;
-        gap = 0;
-      } else {
-        break;
-      }
-    }
-    if (last - i > bestEnd - bestStart) {
-      bestStart = i;
-      bestEnd = last;
+    while (j + 1 < a.length && a[j + 1]) j++;
+    if (j - i > be - bs) {
+      bs = i;
+      be = j;
     }
     i = j + 1;
   }
+  return [bs, be < bs ? bs : be];
+}
 
-  if (bestEnd - bestStart < 2) return null;
-  const boundaries = teeth.slice(bestStart, bestEnd + 1);
+/** Fraction of a cell's inset centre that is "bead" (coloured or dark), i.e.
+ *  not the light/desaturated background (white or grey/white checkerboard). */
+function cellBeadFraction(
+  rgba: Uint8ClampedArray,
+  imgW: number,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+): number {
+  const ix0 = Math.floor(x0 + (x1 - x0) * 0.22);
+  const iy0 = Math.floor(y0 + (y1 - y0) * 0.22);
+  const ix1 = Math.ceil(x1 - (x1 - x0) * 0.22);
+  const iy1 = Math.ceil(y1 - (y1 - y0) * 0.22);
+  let bead = 0;
+  let n = 0;
+  for (let y = iy0; y < iy1; y++) {
+    for (let x = ix0; x < ix1; x++) {
+      const p = (y * imgW + x) * 4;
+      const r = rgba[p]!;
+      const g = rgba[p + 1]!;
+      const b = rgba[p + 2]!;
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      const sat = Math.max(r, g, b) - Math.min(r, g, b);
+      if (!(lum > 185 && sat < 30)) bead++;
+      n++;
+    }
+  }
+  return n === 0 ? 0 : bead / n;
+}
+
+/**
+ * Trim two full combs to the grid's real extent: the largest contiguous block
+ * of rows/cols that contain at least one bead cell. A bead cell is mostly
+ * coloured-or-dark (any bead colour, including black/grey); empty checkerboard
+ * cells and axis-number labels are light with at most a tiny digit, so they
+ * don't count — which excludes the surrounding labels and the colour legend
+ * while keeping interior empty cells.
+ */
+export function trimToBeadExtent(
+  colTeeth: number[],
+  rowTeeth: number[],
+  rgba: Uint8ClampedArray,
+  imgW: number,
+): { colTeeth: number[]; rowTeeth: number[] } {
+  const nc = colTeeth.length - 1;
+  const nr = rowTeeth.length - 1;
+  if (nc < 2 || nr < 2) return { colTeeth, rowTeeth };
+  const rowHas = new Array<boolean>(nr).fill(false);
+  const colHas = new Array<boolean>(nc).fill(false);
+  // A bead cell is a solid colour (~90-100% of the inset). Axis-number label
+  // cells are light with digits filling only ~20-35%, so 0.5 excludes them.
+  const BEAD = 0.5;
+  for (let r = 0; r < nr; r++) {
+    for (let c = 0; c < nc; c++) {
+      const f = cellBeadFraction(
+        rgba,
+        imgW,
+        colTeeth[c]!,
+        rowTeeth[r]!,
+        colTeeth[c + 1]!,
+        rowTeeth[r + 1]!,
+      );
+      if (f > BEAD) {
+        rowHas[r] = true;
+        colHas[c] = true;
+      }
+    }
+  }
+  const [cs, ce] = longestTrueRun(colHas);
+  const [rs, re] = longestTrueRun(rowHas);
   return {
-    boundaries,
-    extent: [boundaries[0]!, boundaries[boundaries.length - 1]!],
-    pitch,
+    colTeeth: colTeeth.slice(cs, ce + 2),
+    rowTeeth: rowTeeth.slice(rs, re + 2),
   };
 }
 
@@ -277,10 +374,8 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
       let rw = 0;
       for (let x = 0; x < width; x++) {
         const off = rowOff + x;
-        const ax = Math.abs(dx[off]!);
-        const ay = Math.abs(dy[off]!);
-        colScore[x] = colScore[x]! + ax;
-        rs += ay;
+        colScore[x] = colScore[x]! + Math.abs(dx[off]!);
+        rs += Math.abs(dy[off]!);
         const p = off * 4;
         if (rgba[p]! < 235 || rgba[p + 1]! < 235 || rgba[p + 2]! < 235) {
           rw++;
@@ -298,17 +393,24 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
     let rowBoundaries: number[];
     let usedFallback = false;
 
-    if (colResult && colResult.boundaries.length >= 3) {
-      colBoundaries = colResult.boundaries;
+    if (
+      colResult &&
+      rowResult &&
+      colResult.teeth.length >= 3 &&
+      rowResult.teeth.length >= 3
+    ) {
+      const trimmed = trimToBeadExtent(
+        colResult.teeth,
+        rowResult.teeth,
+        rgba,
+        width,
+      );
+      colBoundaries = trimmed.colTeeth;
+      rowBoundaries = trimmed.rowTeeth;
     } else {
       usedFallback = true;
-      colBoundaries = fallbackAxis(colScore, colNonWhite, width);
-    }
-    if (rowResult && rowResult.boundaries.length >= 3) {
-      rowBoundaries = rowResult.boundaries;
-    } else {
-      usedFallback = true;
-      rowBoundaries = fallbackAxis(rowScore, rowNonWhite, height);
+      colBoundaries = colResult?.teeth ?? fallbackAxis(colScore, colNonWhite, width);
+      rowBoundaries = rowResult?.teeth ?? fallbackAxis(rowScore, rowNonWhite, height);
     }
 
     const debug: GridDebug = {
@@ -318,14 +420,8 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
       pitchY: rowResult?.pitch ?? null,
       cols: colBoundaries.length - 1,
       rows: rowBoundaries.length - 1,
-      colExtent: colResult?.extent ?? [
-        colBoundaries[0]!,
-        colBoundaries[colBoundaries.length - 1]!,
-      ],
-      rowExtent: rowResult?.extent ?? [
-        rowBoundaries[0]!,
-        rowBoundaries[rowBoundaries.length - 1]!,
-      ],
+      colExtent: [colBoundaries[0]!, colBoundaries[colBoundaries.length - 1]!],
+      rowExtent: [rowBoundaries[0]!, rowBoundaries[rowBoundaries.length - 1]!],
       usedFallback,
     };
     (globalThis as unknown as { __PS_GRID_DEBUG__?: GridDebug }).__PS_GRID_DEBUG__ =

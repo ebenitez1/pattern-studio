@@ -20,13 +20,20 @@ const HASH_SAMPLE = 24; // sample each cell into 24x24 gray for hashing
 const THUMB_SIZE = 48;
 const INSET = 0.16; // ignore the outer 16% of a cell (grid lines / borders)
 
-function isNearWhite(hex: string): boolean {
+/**
+ * Light & desaturated → an empty cell background. Covers plain white *and* the
+ * grey/white checkerboard many exporters use for empty cells. Saturated colours
+ * (real beads) and dark colours are excluded.
+ */
+function isLightDesaturated(hex: string): boolean {
   const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());
   if (!m) return false;
   const r = parseInt(m[1]!, 16);
   const g = parseInt(m[2]!, 16);
   const b = parseInt(m[3]!, 16);
-  return r > 225 && g > 225 && b > 225;
+  const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+  const sat = Math.max(r, g, b) - Math.min(r, g, b);
+  return lum > 185 && sat < 30;
 }
 
 /**
@@ -204,7 +211,7 @@ export function recognizeSymbols(
       color,
     });
     isBackground.push(
-      isNearWhite(color) && inkFraction(data, width, region) < 0.006,
+      isLightDesaturated(color) && inkFraction(data, width, region) < 0.006,
     );
   }
 
