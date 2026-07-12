@@ -24,6 +24,16 @@ export function toggleSymbolSelection(
     : [...selected, symbolId];
 }
 
+/** Toggle a symbol in the hidden-colours list. */
+export function toggleHiddenSymbol(
+  hidden: string[],
+  symbolId: string,
+): string[] {
+  return hidden.includes(symbolId)
+    ? hidden.filter((id) => id !== symbolId)
+    : [...hidden, symbolId];
+}
+
 /**
  * Resolve the render state for one cell. Pure and allocation-free so the
  * renderer can call it inside a 150x150+ draw loop.
@@ -33,6 +43,7 @@ export function cellRenderState(
   filter: FilterState,
   progress: Record<string, CellProgress>,
 ): CellRenderState {
+  if (filter.hiddenSymbolIds.includes(cell.symbol_id)) return "hidden";
   if (filter.hideCompleted) {
     const status = progress[cellKey(cell.row, cell.col)]?.status;
     if (status === "completed") return "hidden";
@@ -58,12 +69,19 @@ export function selectedIdSet(filter: FilterState): Set<string> {
   return new Set(filter.selectedSymbolIds);
 }
 
+/** Set version of the hidden-colours list for hot render loops. */
+export function hiddenIdSet(filter: FilterState): Set<string> {
+  return new Set(filter.hiddenSymbolIds);
+}
+
 export function cellRenderStateFast(
   cell: GridCell,
   filter: FilterState,
   selectedIds: Set<string>,
   progress: Record<string, CellProgress>,
+  hiddenIds?: Set<string>,
 ): CellRenderState {
+  if (hiddenIds?.has(cell.symbol_id)) return "hidden";
   if (filter.hideCompleted) {
     const status = progress[cellKey(cell.row, cell.col)]?.status;
     if (status === "completed") return "hidden";

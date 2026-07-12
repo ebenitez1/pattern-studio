@@ -14,6 +14,7 @@ import {
   cellRenderStateFast,
   cellKey,
   colors,
+  hiddenIdSet,
   highlightColor,
   selectedIdSet,
   useProjectStore,
@@ -88,6 +89,7 @@ export function PatternCanvas() {
     const grid = project.grid;
     const progress = project.progress;
     const selIds = selectedIdSet(filter);
+    const hidIds = hiddenIdSet(filter);
     const hilite = highlightColor(a11y);
 
     const cellPx = BASE_CELL * viewport.zoom;
@@ -134,8 +136,19 @@ export function PatternCanvas() {
           continue;
         }
 
-        const renderState = cellRenderStateFast(cell, filter, selIds, progress);
-        if (renderState === "hidden") continue;
+        const renderState = cellRenderStateFast(
+          cell,
+          filter,
+          selIds,
+          progress,
+          hidIds,
+        );
+        if (renderState === "hidden") {
+          // hidden colours / hidden-completed cells show as empty canvas
+          ctx.fillStyle = "#f0f0f0";
+          ctx.fillRect(ox + c * cellPx, oy + r * cellPx, cellPx, cellPx);
+          continue;
+        }
 
         const x = ox + c * cellPx;
         const symbol = symbolById.get(cell.symbol_id);
@@ -487,8 +500,13 @@ export function PatternCanvas() {
       const row = Math.floor((pos.y - s.viewport.offsetY) / cellPx);
       if (row >= 0 && row < p.grid.rows && col >= 0 && col < p.grid.cols) {
         const cell = p.grid.cells[row * p.grid.cols + col];
-        // ignore clicks on empty/background cells — they aren't beads
-        if (cell && cell.symbol_id !== BACKGROUND_SYMBOL_ID) {
+        // ignore clicks on empty/background cells and on hidden colours —
+        // a hidden colour is locked until it's unhidden
+        if (
+          cell &&
+          cell.symbol_id !== BACKGROUND_SYMBOL_ID &&
+          !s.filter.hiddenSymbolIds.includes(cell.symbol_id)
+        ) {
           s.cycleCell(row, col);
         }
       }

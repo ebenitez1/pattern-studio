@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { getStorage } from "../storage";
 import { cycleCell, setCellStatus, clearStatus } from "../logic/progress";
-import { toggleSymbolSelection } from "../logic/filters";
+import { toggleHiddenSymbol, toggleSymbolSelection } from "../logic/filters";
 import {
   DEFAULT_FILTER,
   DEFAULT_VIEWPORT,
@@ -56,6 +56,9 @@ export interface ProjectStore {
   toggleSymbol: (symbolId: string) => void;
   clearSelection: () => void;
   setHideCompleted: (hide: boolean) => void;
+  /** toggle a colour hidden — hidden colours render as empty canvas and their
+   *  cells cannot be clicked until unhidden */
+  toggleHiddenColor: (symbolId: string) => void;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
 
@@ -239,6 +242,17 @@ export const useProjectStore = create<ProjectStore>()(
     setHideCompleted: (hideCompleted) => {
       set({
         filter: { ...get().filter, hideCompleted },
+        gridRevision: get().gridRevision + 1,
+      });
+    },
+
+    toggleHiddenColor: (symbolId) => {
+      const filter = get().filter;
+      set({
+        filter: {
+          ...filter,
+          hiddenSymbolIds: toggleHiddenSymbol(filter.hiddenSymbolIds, symbolId),
+        },
         gridRevision: get().gridRevision + 1,
       });
     },

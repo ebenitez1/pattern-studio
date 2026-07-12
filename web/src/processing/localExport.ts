@@ -9,6 +9,7 @@ import {
   cellRenderStateFast,
   computeStats,
   EXPORT_MIME,
+  hiddenIdSet,
   selectedIdSet,
   statusOf,
   type CellProgress,
@@ -39,6 +40,7 @@ function renderPngBlob(
     grid.symbols.map((s) => [s.id, s.dominant_color ?? "#888888"]),
   );
   const selected = selectedIdSet(filter);
+  const hidden = hiddenIdSet(filter);
 
   for (const cell of grid.cells) {
     // empty cells export as light canvas, matching the source chart background
@@ -47,8 +49,12 @@ function renderPngBlob(
       ctx.fillRect(cell.col * CELL_PX, cell.row * CELL_PX, CELL_PX, CELL_PX);
       continue;
     }
-    const state = cellRenderStateFast(cell, filter, selected, progress);
-    if (state === "hidden") continue;
+    const state = cellRenderStateFast(cell, filter, selected, progress, hidden);
+    if (state === "hidden") {
+      ctx.fillStyle = "#f0f0f0";
+      ctx.fillRect(cell.col * CELL_PX, cell.row * CELL_PX, CELL_PX, CELL_PX);
+      continue;
+    }
     const x = cell.col * CELL_PX;
     const y = cell.row * CELL_PX;
     const base = colorById.get(cell.symbol_id) ?? "#888888";

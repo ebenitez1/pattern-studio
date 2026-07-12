@@ -17,6 +17,7 @@ export function SymbolPanel() {
   const toggleSymbol = useProjectStore((s) => s.toggleSymbol);
   const clearSelection = useProjectStore((s) => s.clearSelection);
   const setHideCompleted = useProjectStore((s) => s.setHideCompleted);
+  const toggleHiddenColor = useProjectStore((s) => s.toggleHiddenColor);
 
   const stats = useMemo(() => {
     if (!project) return null;
@@ -39,6 +40,7 @@ export function SymbolPanel() {
 
   const thumbSize = Math.round(28 * prefs.symbolScale);
   const selected = new Set(filter.selectedSymbolIds);
+  const hidden = new Set(filter.hiddenSymbolIds);
 
   return (
     <div className="symbol-panel">
@@ -67,13 +69,14 @@ export function SymbolPanel() {
           const st = statsBySymbol.get(sym.id);
           const isSelected = selected.has(sym.id);
           const isComplete = !!st && st.total > 0 && st.completed === st.total;
+          const isHidden = hidden.has(sym.id);
           return (
-            <li key={sym.id}>
+            <li key={sym.id} className="symbol-item">
               <button
                 type="button"
                 className={`symbol-row ${isSelected ? "selected" : ""} ${
                   isComplete ? "complete" : ""
-                }`}
+                } ${isHidden ? "hidden-color" : ""}`}
                 onClick={() => toggleSymbol(sym.id)}
                 aria-pressed={isSelected}
               >
@@ -117,6 +120,19 @@ export function SymbolPanel() {
                   )}
                 </span>
                 <span className="symbol-count">{sym.count}</span>
+              </button>
+              <button
+                type="button"
+                className={`hide-toggle ${isHidden ? "active" : ""}`}
+                onClick={() => toggleHiddenColor(sym.id)}
+                aria-pressed={isHidden}
+                title={
+                  isHidden
+                    ? "Show this color (unlock its tiles)"
+                    : "Hide this color (its tiles become unclickable)"
+                }
+              >
+                {isHidden ? "Hidden" : "Hide"}
               </button>
             </li>
           );

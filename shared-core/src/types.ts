@@ -109,12 +109,16 @@ export interface FilterState {
   /** multi-select of symbol ids the mode applies to */
   selectedSymbolIds: string[];
   hideCompleted: boolean;
+  /** colours toggled hidden — their cells render as empty canvas and are not
+   *  clickable until unhidden */
+  hiddenSymbolIds: string[];
 }
 
 export const DEFAULT_FILTER: FilterState = {
   mode: "none",
   selectedSymbolIds: [],
   hideCompleted: false,
+  hiddenSymbolIds: [],
 };
 
 export interface Viewport {
