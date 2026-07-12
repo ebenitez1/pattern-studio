@@ -67,6 +67,39 @@ function inkFraction(
   return n === 0 ? 0 : dark / n;
 }
 
+/**
+ * Robust luminance spread (p10–p90) of a cell's inset. A grey/white
+ * checkerboard "empty" marker mixes two light tones (~16 apart → spread > 12);
+ * a solid white cell is flat (spread of a few units, even with JPEG noise).
+ * Used to tell a deliberate empty marker from a genuine white bead colour.
+ */
+function lumSpread(
+  data: Uint8ClampedArray,
+  imgW: number,
+  region: CellRegion,
+): number {
+  const insetX = region.w * INSET;
+  const insetY = region.h * INSET;
+  const x0 = Math.floor(region.x + insetX);
+  const y0 = Math.floor(region.y + insetY);
+  const x1 = Math.ceil(region.x + region.w - insetX);
+  const y1 = Math.ceil(region.y + region.h - insetY);
+  const lums: number[] = [];
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const idx = (y * imgW + x) * 4;
+      lums.push(
+        0.299 * data[idx]! + 0.587 * data[idx + 1]! + 0.114 * data[idx + 2]!,
+      );
+    }
+  }
+  if (lums.length < 4) return 0;
+  lums.sort((a, b) => a - b);
+  const p10 = lums[Math.floor(lums.length * 0.1)]!;
+  const p90 = lums[Math.floor(lums.length * 0.9)]!;
+  return p90 - p10;
+}
+
 interface CellRegion {
   row: number;
   col: number;
@@ -209,27 +242,27 @@ function thumbnailDataUrl(
   return canvas.toDataURL("image/png");
 }
 
-/** Largest enclosed empty region (in cells) still treated as design rather
- *  than background — small enclosed empties are highlights (e.g. eyes); larger
- *  enclosed empties are negative space and should be stripped. */
-const MAX_HIGHLIGHT_REGION = 5;
-
 /**
- * Decide which empty cells are background. A cell is background if it is an
- * empty candidate AND either (a) connected (4-way) to the grid border through
- * other empty candidates — the surrounding background — or (b) part of a large
- * enclosed empty region (negative space inside the figure's silhouette). Small
- * enclosed empties (highlights the design intends to keep) are NOT background.
+ * Decide which empty cells are background.
+ *
+ * Two kinds of empty candidate:
+ *  - checkerboard-textured cells: a deliberate "no stitch" marker → background
+ *    wherever they are (interior or exterior).
+ *  - solid near-white cells: background ONLY when connected (4-way) to the
+ *    grid border through other empties — the surrounding canvas. Solid white
+ *    enclosed by the design (a white mane, eye highlights, …) is a real,
+ *    toggleable colour, whatever its size.
  */
 function computeBackground(
   isBgCandidate: boolean[],
+  isChecker: boolean[],
   rows: number,
   cols: number,
 ): boolean[] {
   const n = rows * cols;
   const bg = new Array<boolean>(n).fill(false);
 
-  // (a) flood-fill exterior background from the border
+  // flood-fill exterior background from the border over all empty candidates
   const stack: number[] = [];
   const pushExt = (r: number, c: number) => {
     if (r < 0 || c < 0 || r >= rows || c >= cols) return;
@@ -257,33 +290,9 @@ function computeBackground(
     pushExt(r, c + 1);
   }
 
-  // (b) enclosed empty regions: strip large ones (negative space), keep small
-  const visited = bg.slice();
-  for (let start = 0; start < n; start++) {
-    if (!isBgCandidate[start] || visited[start]) continue;
-    const comp: number[] = [];
-    const s = [start];
-    visited[start] = true;
-    while (s.length) {
-      const i = s.pop()!;
-      comp.push(i);
-      const r = Math.floor(i / cols);
-      const c = i % cols;
-      const nbrs = [
-        r > 0 ? i - cols : -1,
-        r < rows - 1 ? i + cols : -1,
-        c > 0 ? i - 1 : -1,
-        c < cols - 1 ? i + 1 : -1,
-      ];
-      for (const k of nbrs) {
-        if (k >= 0 && isBgCandidate[k] && !visited[k]) {
-          visited[k] = true;
-          s.push(k);
-        }
-      }
-    }
-    if (comp.length > MAX_HIGHLIGHT_REGION) for (const j of comp) bg[j] = true;
-  }
+  // checkerboard "no stitch" markers are background even when enclosed
+  for (let i = 0; i < n; i++) if (isChecker[i]) bg[i] = true;
+
   return bg;
 }
 
@@ -307,6 +316,7 @@ export function recognizeSymbols(
   // background cells keep the grid dense but carry the reserved id.
   const hashed: HashedCell[] = [];
   const isBackground: boolean[] = [];
+  const isChecker: boolean[] = [];
   for (const region of regions) {
     const gray = sampleGray(data, width, region, HASH_SAMPLE);
     const color = dominantColor(data, width, region);
@@ -316,15 +326,25 @@ export function recognizeSymbols(
       hash: perceptualHash(gray, HASH_SAMPLE, HASH_SAMPLE),
       color,
     });
-    isBackground.push(
-      isLightDesaturated(color) && inkFraction(data, width, region) < 0.006,
+    const candidate =
+      isLightDesaturated(color) && inkFraction(data, width, region) < 0.006;
+    isBackground.push(candidate);
+    // Checker texture is only detectable when the cell is big enough that the
+    // inset holds real texture; on tiny cells the spread is grid-line bleed.
+    // measured: solid white empties spread ~0; checker markers 11-12 (JPEG-
+    // smoothed two-tone) — 7 sits cleanly between.
+    isChecker.push(
+      candidate &&
+        region.w >= 14 &&
+        region.h >= 14 &&
+        lumSpread(data, width, region) > 7,
     );
   }
 
   // Only cells that are empty AND reachable from the grid border are true
   // background. Empty cells enclosed by the design (e.g. white eye highlights
   // inside the figure) are not reachable, so they stay as real tracked cells.
-  const exteriorBg = computeBackground(isBackground, rows, cols);
+  const exteriorBg = computeBackground(isBackground, isChecker, rows, cols);
 
   const contentRegionIdx: number[] = [];
   const contentCells: HashedCell[] = [];
