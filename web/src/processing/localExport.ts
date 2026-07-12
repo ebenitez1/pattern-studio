@@ -73,6 +73,17 @@ function renderPngBlob(
       }
       ctx.globalAlpha = 1;
     }
+
+    // completed check mark at full opacity over the faded tile
+    if (completed) {
+      ctx.strokeStyle = "#66bb6a";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x + CELL_PX * 0.22, y + CELL_PX * 0.55);
+      ctx.lineTo(x + CELL_PX * 0.42, y + CELL_PX * 0.75);
+      ctx.lineTo(x + CELL_PX * 0.78, y + CELL_PX * 0.28);
+      ctx.stroke();
+    }
   }
 
   // grid lines

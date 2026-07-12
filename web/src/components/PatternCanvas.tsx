@@ -206,6 +206,18 @@ export function PatternCanvas() {
             // else: colour-only fallback while the image decodes
           }
         }
+
+        // completed check mark, drawn at full opacity over the faded tile
+        if (status === "completed" && cellPx >= 12) {
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = "#66bb6a";
+          ctx.lineWidth = Math.max(1.5, cellPx * 0.1);
+          ctx.beginPath();
+          ctx.moveTo(x + cellPx * 0.22, y + cellPx * 0.55);
+          ctx.lineTo(x + cellPx * 0.42, y + cellPx * 0.75);
+          ctx.lineTo(x + cellPx * 0.78, y + cellPx * 0.28);
+          ctx.stroke();
+        }
       }
     }
     ctx.globalAlpha = 1; // don't let a trailing faded cell dim the grid lines
