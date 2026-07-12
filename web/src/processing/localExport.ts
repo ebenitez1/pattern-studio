@@ -48,12 +48,17 @@ function renderPngBlob(
     const y = cell.row * CELL_PX;
     const base = colorById.get(cell.symbol_id) ?? "#888888";
 
+    // completed tiles fade to 20% opacity so progress is visible at a glance
+    const completed = statusOf(progress, cell.row, cell.col) === "completed";
+    const cellAlpha = completed ? 0.2 : 1;
+
     if (state === "dimmed") {
-      ctx.globalAlpha = 0.15;
+      ctx.globalAlpha = 0.15 * cellAlpha;
       ctx.fillStyle = base;
       ctx.fillRect(x, y, CELL_PX, CELL_PX);
       ctx.globalAlpha = 1;
     } else {
+      ctx.globalAlpha = cellAlpha;
       ctx.fillStyle = base;
       ctx.fillRect(x, y, CELL_PX, CELL_PX);
       if (state === "highlighted") {
@@ -61,17 +66,7 @@ function renderPngBlob(
         ctx.lineWidth = 3;
         ctx.strokeRect(x + 1.5, y + 1.5, CELL_PX - 3, CELL_PX - 3);
       }
-    }
-
-    // completed overlay (check)
-    if (statusOf(progress, cell.row, cell.col) === "completed") {
-      ctx.strokeStyle = "rgba(46,125,50,0.95)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(x + 4, y + CELL_PX / 2);
-      ctx.lineTo(x + CELL_PX / 2 - 1, y + CELL_PX - 5);
-      ctx.lineTo(x + CELL_PX - 4, y + 5);
-      ctx.stroke();
+      ctx.globalAlpha = 1;
     }
   }
 

@@ -135,6 +135,12 @@ export function PatternCanvas() {
         const symbol = symbolById.get(cell.symbol_id);
         const baseColor = symbol?.dominant_color ?? colors.surfaceRaised;
 
+        // Completed cells are drawn at 20% opacity — faded but still visible,
+        // so the user can see at a glance which tiles are done.
+        const status = progress[cellKey(cell.row, cell.col)]?.status;
+        const cellAlpha = status === "completed" ? 0.2 : 1;
+        ctx.globalAlpha = cellAlpha;
+
         // base fill
         ctx.fillStyle = baseColor;
         ctx.fillRect(x, y, cellPx, cellPx);
@@ -146,10 +152,10 @@ export function PatternCanvas() {
           ctx.fillStyle = "#00000066";
           ctx.fillRect(x, y, cellPx, cellPx);
         } else if (renderState === "highlighted") {
-          ctx.globalAlpha = 0.45;
+          ctx.globalAlpha = 0.45 * cellAlpha;
           ctx.fillStyle = hilite;
           ctx.fillRect(x, y, cellPx, cellPx);
-          ctx.globalAlpha = 1;
+          ctx.globalAlpha = cellAlpha;
           if (cellPx >= 6) {
             ctx.strokeStyle = hilite;
             ctx.lineWidth = Math.max(1, cellPx * 0.08);
@@ -157,22 +163,8 @@ export function PatternCanvas() {
           }
         }
 
-        // status overlay — must stay distinguishable even at tiny zoom
-        const status = progress[cellKey(cell.row, cell.col)]?.status;
-        if (status === "completed") {
-          ctx.fillStyle = colors.statusCompleted;
-          ctx.fillRect(x, y, cellPx, cellPx);
-          if (cellPx >= 12) {
-            // diagonal check mark
-            ctx.strokeStyle = "#e8f5e9";
-            ctx.lineWidth = Math.max(1.5, cellPx * 0.1);
-            ctx.beginPath();
-            ctx.moveTo(x + cellPx * 0.22, y + cellPx * 0.55);
-            ctx.lineTo(x + cellPx * 0.42, y + cellPx * 0.75);
-            ctx.lineTo(x + cellPx * 0.78, y + cellPx * 0.28);
-            ctx.stroke();
-          }
-        } else if (status === "skipped") {
+        // remaining status overlays — must stay distinguishable at tiny zoom
+        if (status === "skipped") {
           ctx.fillStyle = colors.statusSkipped;
           ctx.fillRect(x, y, cellPx, cellPx);
         } else if (status === "needs_review") {
@@ -183,7 +175,7 @@ export function PatternCanvas() {
         }
 
         // symbol glyph, only when zoomed in enough & not obscured
-        if (drawGlyphs && symbol && renderState !== "dimmed" && status !== "completed") {
+        if (drawGlyphs && symbol && renderState !== "dimmed") {
           if (symbol.ocr_text) {
             ctx.fillStyle = luminance(baseColor) > 0.55 ? "#000000" : "#ffffff";
             ctx.fillText(
@@ -210,6 +202,7 @@ export function PatternCanvas() {
         }
       }
     }
+    ctx.globalAlpha = 1; // don't let a trailing faded cell dim the grid lines
 
     // grid lines (heavier every 10 cells); high contrast strengthens them
     const minorColor = a11y.highContrast ? colors.gridLineMajor : colors.gridLine;

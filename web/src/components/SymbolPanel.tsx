@@ -66,11 +66,14 @@ export function SymbolPanel() {
         {symbols.map((sym) => {
           const st = statsBySymbol.get(sym.id);
           const isSelected = selected.has(sym.id);
+          const isComplete = !!st && st.total > 0 && st.completed === st.total;
           return (
             <li key={sym.id}>
               <button
                 type="button"
-                className={`symbol-row ${isSelected ? "selected" : ""}`}
+                className={`symbol-row ${isSelected ? "selected" : ""} ${
+                  isComplete ? "complete" : ""
+                }`}
                 onClick={() => toggleSymbol(sym.id)}
                 aria-pressed={isSelected}
               >
@@ -98,7 +101,13 @@ export function SymbolPanel() {
                   </span>
                   {st && (
                     <span className="symbol-breakdown">
-                      {st.completed}/{st.total} done · {st.remaining} left
+                      {isComplete ? (
+                        <span className="symbol-complete-badge">✓ Complete</span>
+                      ) : (
+                        <>
+                          {st.completed}/{st.total} done · {st.remaining} left
+                        </>
+                      )}
                     </span>
                   )}
                 </span>

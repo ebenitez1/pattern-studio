@@ -466,6 +466,18 @@ textarea.input {
   border-color: var(--color-accent);
 }
 
+/* fully completed colour: fade the row to mirror the faded tiles */
+.symbol-row.complete .symbol-thumb,
+.symbol-row.complete .symbol-title,
+.symbol-row.complete .symbol-count {
+  opacity: 0.35;
+}
+
+.symbol-complete-badge {
+  color: #66bb6a;
+  font-weight: 600;
+}
+
 .symbol-thumb {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
