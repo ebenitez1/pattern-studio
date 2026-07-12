@@ -125,8 +125,14 @@ export function PatternCanvas() {
       for (let c = c0; c <= c1; c++) {
         const cell: GridCell | undefined = grid.cells[rowBase + c];
         if (!cell) continue;
-        // background/empty cells render as bare grid squares
-        if (cell.symbol_id === BACKGROUND_SYMBOL_ID) continue;
+        // Empty/background cells draw as light canvas — matching the source
+        // chart's white background — rather than vanishing into the dark
+        // workspace. They stay untracked and unclickable.
+        if (cell.symbol_id === BACKGROUND_SYMBOL_ID) {
+          ctx.fillStyle = "#f0f0f0";
+          ctx.fillRect(ox + c * cellPx, oy + r * cellPx, cellPx, cellPx);
+          continue;
+        }
 
         const renderState = cellRenderStateFast(cell, filter, selIds, progress);
         if (renderState === "hidden") continue;

@@ -41,7 +41,12 @@ function renderPngBlob(
   const selected = selectedIdSet(filter);
 
   for (const cell of grid.cells) {
-    if (cell.symbol_id === BACKGROUND_SYMBOL_ID) continue;
+    // empty cells export as light canvas, matching the source chart background
+    if (cell.symbol_id === BACKGROUND_SYMBOL_ID) {
+      ctx.fillStyle = "#f0f0f0";
+      ctx.fillRect(cell.col * CELL_PX, cell.row * CELL_PX, CELL_PX, CELL_PX);
+      continue;
+    }
     const state = cellRenderStateFast(cell, filter, selected, progress);
     if (state === "hidden") continue;
     const x = cell.col * CELL_PX;
