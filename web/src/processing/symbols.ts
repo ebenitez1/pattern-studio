@@ -189,12 +189,18 @@ function thumbnailDataUrl(
   const ctx = canvas.getContext("2d");
   if (!ctx) return "";
   ctx.imageSmoothingEnabled = false;
+  // Crop with the same inset used for colour sampling so the surrounding grid
+  // lines never contaminate the thumbnail — on fine grids (cells only a few
+  // pixels) an un-inset crop is mostly dark grid line, which made white cells
+  // render as dark-framed tiles in the viewer.
+  const insetX = region.w * INSET;
+  const insetY = region.h * INSET;
   ctx.drawImage(
     source,
-    region.x,
-    region.y,
-    Math.max(1, region.w),
-    Math.max(1, region.h),
+    region.x + insetX,
+    region.y + insetY,
+    Math.max(1, region.w - 2 * insetX),
+    Math.max(1, region.h - 2 * insetY),
     0,
     0,
     THUMB_SIZE,
