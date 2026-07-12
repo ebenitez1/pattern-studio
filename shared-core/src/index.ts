@@ -7,4 +7,5 @@ export * from "./logic/filters";
 export * from "./logic/search";
 export * from "./logic/export";
 export * from "./logic/phash";
+export * from "./logic/dmc";
 export * from "./state/store";

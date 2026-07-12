@@ -7,6 +7,7 @@ import {
   BACKGROUND_SYMBOL_ID,
   clusterCells,
   distanceToConfidence,
+  nearestDmc,
   perceptualHash,
   type GridCell,
   type GridData,
@@ -387,13 +388,15 @@ export function recognizeSymbols(
       const regionIdx = contentRegionIdx[contentRep]!;
       const region = regions[regionIdx]!;
       representativeRegion[id] = region;
+      const dominant = hashed[regionIdx]!.color;
+      const dmc = nearestDmc(dominant);
       return {
         id,
         thumbnail: thumbnailDataUrl(fullCanvas, region),
         ocr_text: null,
-        dominant_color: hashed[regionIdx]!.color,
-        color_name: null,
-        color_code: null,
+        dominant_color: dominant,
+        color_name: dmc?.name ?? null,
+        color_code: dmc ? `DMC ${dmc.code}` : null,
         count: cluster.counts[id]!,
       } satisfies PatternSymbol;
     })

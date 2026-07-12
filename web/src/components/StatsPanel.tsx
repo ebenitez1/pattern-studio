@@ -107,7 +107,7 @@ export function StatsPanel() {
                     className="stats-swatch"
                     style={{ background: sym?.dominant_color ?? "var(--color-surface-raised)" }}
                   />
-                  {sym?.ocr_text ?? sym?.color_name ?? row.symbol_id}
+                  {sym?.ocr_text ?? sym?.color_code ?? sym?.color_name ?? row.symbol_id}
                 </td>
                 <td>{row.total}</td>
                 <td>{row.completed}</td>

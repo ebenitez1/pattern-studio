@@ -95,9 +95,14 @@ export function SymbolPanel() {
                   />
                 )}
                 <span className="symbol-meta">
-                  <span className="symbol-title">
+                  <span
+                    className="symbol-title"
+                    title={sym.dominant_color ?? undefined}
+                  >
                     {sym.ocr_text && <span className="ocr-badge">{sym.ocr_text}</span>}
-                    {sym.color_name ?? sym.dominant_color ?? sym.id}
+                    {sym.color_code
+                      ? `${sym.color_code} · ${sym.color_name}`
+                      : (sym.color_name ?? sym.dominant_color ?? sym.id)}
                   </span>
                   {st && (
                     <span className="symbol-breakdown">
