@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useProjectStore } from "@pattern-studio/core";
-import { TopBar } from "./components/TopBar";
 import { Sidebar } from "./components/Sidebar";
 import { PatternCanvas } from "./components/PatternCanvas";
 import { UploadDropzone } from "./components/UploadDropzone";
@@ -32,7 +31,6 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <TopBar onUploadClick={() => setShowUpload(true)} />
       <div className="app-main">
         <Sidebar />
         <main className="workspace">

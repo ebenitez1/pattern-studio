@@ -4,6 +4,7 @@ import { ProjectList } from "./ProjectList";
 import { SymbolPanel } from "./SymbolPanel";
 import { StatsPanel } from "./StatsPanel";
 import { ExportMenu } from "./ExportMenu";
+import { SettingsPanel } from "./SettingsPanel";
 
 function CollapsiblePanel({
   title,
@@ -48,6 +49,9 @@ export function Sidebar() {
       </CollapsiblePanel>
       <CollapsiblePanel title="Export">
         <ExportMenu />
+      </CollapsiblePanel>
+      <CollapsiblePanel title="Settings">
+        <SettingsPanel />
       </CollapsiblePanel>
     </aside>
   );

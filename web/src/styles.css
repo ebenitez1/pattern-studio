@@ -227,6 +227,14 @@ textarea.input {
   margin-top: var(--space-sm);
 }
 
+/* ---- settings panel ---- */
+
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
 /* ---- current project ---- */
 
 .current-project {

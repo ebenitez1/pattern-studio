@@ -334,6 +334,46 @@ function cellBeadFraction(
   return n === 0 ? 0 : bead / n;
 }
 
+/**
+ * Is this cell a grey/white checkerboard "no stitch" marker? Checker cells are
+ * entirely light and desaturated but mix two tones (luminance p10–p90 spread
+ * ≥ 8). Axis-label cells fail on the dark digit ink (minLum), bead cells fail
+ * on saturation/darkness, and plain white fails on spread. Only meaningful on
+ * cells big enough for the inset to hold real texture (≥ 14px).
+ */
+function cellIsChecker(
+  rgba: Uint8ClampedArray,
+  imgW: number,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+): boolean {
+  if (x1 - x0 < 14 || y1 - y0 < 14) return false;
+  const ix0 = Math.floor(x0 + (x1 - x0) * 0.22);
+  const iy0 = Math.floor(y0 + (y1 - y0) * 0.22);
+  const ix1 = Math.ceil(x1 - (x1 - x0) * 0.22);
+  const iy1 = Math.ceil(y1 - (y1 - y0) * 0.22);
+  const lums: number[] = [];
+  for (let y = iy0; y < iy1; y++) {
+    for (let x = ix0; x < ix1; x++) {
+      const p = (y * imgW + x) * 4;
+      const r = rgba[p]!;
+      const g = rgba[p + 1]!;
+      const b = rgba[p + 2]!;
+      if (Math.max(r, g, b) - Math.min(r, g, b) >= 45) return false; // colour
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      if (lum < 150) return false; // ink / dark bead
+      lums.push(lum);
+    }
+  }
+  if (lums.length < 8) return false;
+  lums.sort((a, b) => a - b);
+  const spread =
+    lums[Math.floor(lums.length * 0.9)]! - lums[Math.floor(lums.length * 0.1)]!;
+  return spread >= 8;
+}
+
 function cellMeanRgb(
   rgba: Uint8ClampedArray,
   imgW: number,
@@ -458,6 +498,32 @@ export function stripUniformEdges(
   const isLabelBand = (cells: [number, number, number][]): boolean =>
     isUniformLine(cells) && interiorMatches(centroid(cells)) <= interiorTol;
 
+  // a band that is mostly checkerboard "no stitch" cells is empty grid, not a
+  // label strip — keep it so the grid retains its full printed size
+  const checkerFrac = (
+    coords: [number, number, number, number][],
+  ): number => {
+    let cnt = 0;
+    for (const [x0, y0, x1, y1] of coords) {
+      if (cellIsChecker(rgba, imgW, x0, y0, x1, y1)) cnt++;
+    }
+    return coords.length === 0 ? 0 : cnt / coords.length;
+  };
+  const rowCoords = (r: number): [number, number, number, number][] =>
+    Array.from({ length: nc }, (_, c) => [
+      colTeeth[c]!,
+      rowTeeth[r]!,
+      colTeeth[c + 1]!,
+      rowTeeth[r + 1]!,
+    ]);
+  const colCoords = (c: number): [number, number, number, number][] =>
+    Array.from({ length: nr }, (_, r) => [
+      colTeeth[c]!,
+      rowTeeth[r]!,
+      colTeeth[c + 1]!,
+      rowTeeth[r + 1]!,
+    ]);
+
   const topCells = color[0]!;
   const botCells = color[nr - 1]!;
   const leftCells = color.map((row) => row[0]!);
@@ -465,10 +531,14 @@ export function stripUniformEdges(
 
   let ct = colTeeth.slice();
   let rt = rowTeeth.slice();
-  if (isLabelBand(topCells)) rt = rt.slice(1);
-  if (isLabelBand(botCells)) rt = rt.slice(0, -1);
-  if (isLabelBand(leftCells)) ct = ct.slice(1);
-  if (isLabelBand(rightCells)) ct = ct.slice(0, -1);
+  if (isLabelBand(topCells) && checkerFrac(rowCoords(0)) < 0.5)
+    rt = rt.slice(1);
+  if (isLabelBand(botCells) && checkerFrac(rowCoords(nr - 1)) < 0.5)
+    rt = rt.slice(0, -1);
+  if (isLabelBand(leftCells) && checkerFrac(colCoords(0)) < 0.5)
+    ct = ct.slice(1);
+  if (isLabelBand(rightCells) && checkerFrac(colCoords(nc - 1)) < 0.5)
+    ct = ct.slice(0, -1);
   return { colTeeth: ct, rowTeeth: rt };
 }
 
@@ -493,18 +563,20 @@ export function trimToBeadExtent(
   const colHas = new Array<boolean>(nc).fill(false);
   // A bead cell is a solid colour (~90-100% of the inset). Axis-number label
   // cells are light with digits filling only ~20-35%, so 0.5 excludes them.
+  // Checkerboard "no stitch" cells also count as grid content so the grid
+  // keeps its full printed size (e.g. 34×34) even when the border rows are
+  // empty — they become untracked background later.
   const BEAD = 0.5;
   for (let r = 0; r < nr; r++) {
     for (let c = 0; c < nc; c++) {
-      const f = cellBeadFraction(
-        rgba,
-        imgW,
-        colTeeth[c]!,
-        rowTeeth[r]!,
-        colTeeth[c + 1]!,
-        rowTeeth[r + 1]!,
-      );
-      if (f > BEAD) {
+      const x0 = colTeeth[c]!;
+      const y0 = rowTeeth[r]!;
+      const x1 = colTeeth[c + 1]!;
+      const y1 = rowTeeth[r + 1]!;
+      const isGrid =
+        cellBeadFraction(rgba, imgW, x0, y0, x1, y1) > BEAD ||
+        cellIsChecker(rgba, imgW, x0, y0, x1, y1);
+      if (isGrid) {
         rowHas[r] = true;
         colHas[c] = true;
       }

@@ -13,6 +13,7 @@ export function SymbolPanel() {
   const project = useProjectStore((s) => s.project);
   const gridRevision = useProjectStore((s) => s.gridRevision);
   const searchQuery = useProjectStore((s) => s.searchQuery);
+  const setSearchQuery = useProjectStore((s) => s.setSearchQuery);
   const filter = useProjectStore((s) => s.filter);
   const toggleSymbol = useProjectStore((s) => s.toggleSymbol);
   const clearSelection = useProjectStore((s) => s.clearSelection);
@@ -45,6 +46,14 @@ export function SymbolPanel() {
   return (
     <div className="symbol-panel">
       <div className="symbol-panel-controls">
+        <input
+          type="search"
+          className="input"
+          placeholder="Search symbols (letter, colour, code)…"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          aria-label="Search symbols"
+        />
         <FilterModeControl compact />
         <label className="checkbox-row">
           <input
