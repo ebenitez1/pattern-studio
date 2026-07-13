@@ -38,6 +38,7 @@ function toSummary(p: Project): ProjectSummary {
     cols: p.grid.cols,
     completed_cells: completed,
     total_cells: p.grid.cells.length,
+    completed: p.completed ?? false,
     last_opened_at: p.last_opened_at,
   };
 }

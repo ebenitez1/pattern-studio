@@ -150,6 +150,8 @@ export interface Project {
   tags: ProjectTag[];
   /** small data-URL preview for the project list */
   thumbnail: string | null;
+  /** the whole pattern has been marked finished by the user */
+  completed?: boolean;
   created_at: number;
   last_opened_at: number;
 }
@@ -164,6 +166,8 @@ export interface ProjectSummary {
   cols: number;
   completed_cells: number;
   total_cells: number;
+  /** the whole pattern was marked finished */
+  completed?: boolean;
   last_opened_at: number;
 }
 

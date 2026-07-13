@@ -23,6 +23,13 @@ export default function App() {
     };
   }, [flushSave]);
 
+  // the library's "+ Add" button opens the upload dialog from anywhere
+  useEffect(() => {
+    const onOpenUpload = () => setShowUpload(true);
+    window.addEventListener("ps:open-upload", onOpenUpload);
+    return () => window.removeEventListener("ps:open-upload", onOpenUpload);
+  }, []);
+
   return (
     <div className="app-shell">
       <TopBar onUploadClick={() => setShowUpload(true)} />

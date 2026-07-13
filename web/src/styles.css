@@ -227,6 +227,39 @@ textarea.input {
   margin-top: var(--space-sm);
 }
 
+/* ---- pattern library ---- */
+
+.library-controls {
+  align-items: center;
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.library-controls .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.project-done-badge {
+  color: #66bb6a;
+  font-size: 10px;
+  font-weight: 600;
+  margin-left: 6px;
+  white-space: nowrap;
+}
+
+.project-row.completed .project-thumb {
+  opacity: 0.45;
+}
+
+.project-row.completed .project-name {
+  color: var(--color-text-muted);
+}
+
+.btn-done-active {
+  color: #66bb6a !important;
+}
+
 /* ---- sidebar ---- */
 
 .sidebar {

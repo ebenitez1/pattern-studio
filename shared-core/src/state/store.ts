@@ -39,6 +39,10 @@ export interface ProjectStore {
   updateNotes: (notes: string) => void;
   updateTags: (tags: ProjectTag[]) => void;
   renameProject: (name: string) => void;
+  /** rename any stored project by id (library rename, project need not be open) */
+  renameProjectById: (id: string, name: string) => Promise<void>;
+  /** mark a whole pattern finished / not finished */
+  setProjectDone: (id: string, done: boolean) => Promise<void>;
 
   // -- progress -----------------------------------------------------------
   cycleCell: (row: number, col: number) => void;
@@ -149,6 +153,34 @@ export const useProjectStore = create<ProjectStore>()(
       if (!p) return;
       set({ project: { ...p, name } });
       scheduleAutosave(get);
+    },
+
+    renameProjectById: async (id, name) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const current = get().project;
+      if (current?.id === id) {
+        get().renameProject(trimmed);
+        await get().flushSave();
+      } else {
+        const stored = await getStorage().loadProject(id);
+        if (!stored) return;
+        await getStorage().saveProject({ ...stored, name: trimmed });
+      }
+      await get().refreshProjects();
+    },
+
+    setProjectDone: async (id, done) => {
+      const current = get().project;
+      if (current?.id === id) {
+        set({ project: { ...current, completed: done } });
+        await get().flushSave();
+      } else {
+        const stored = await getStorage().loadProject(id);
+        if (!stored) return;
+        await getStorage().saveProject({ ...stored, completed: done });
+      }
+      await get().refreshProjects();
     },
 
     updateNotes: (notes) => {

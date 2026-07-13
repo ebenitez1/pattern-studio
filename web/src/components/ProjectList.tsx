@@ -24,6 +24,7 @@ function TagChips({ tags }: { tags: ProjectTag[] }) {
 
 interface EditState {
   id: string;
+  name: string;
   tags: ProjectTag[];
   freeTag: string;
   notes: string;
@@ -34,6 +35,8 @@ export function ProjectList() {
   const refreshProjects = useProjectStore((s) => s.refreshProjects);
   const openProject = useProjectStore((s) => s.openProject);
   const deleteProject = useProjectStore((s) => s.deleteProject);
+  const renameProjectById = useProjectStore((s) => s.renameProjectById);
+  const setProjectDone = useProjectStore((s) => s.setProjectDone);
   const activeId = useProjectStore((s) => s.project?.id ?? null);
 
   const [query, setQuery] = useState("");
@@ -50,6 +53,7 @@ export function ProjectList() {
     const full = await dexieStorage.loadProject(summary.id);
     setEdit({
       id: summary.id,
+      name: full?.name ?? summary.name,
       tags: full?.tags ?? summary.tags,
       freeTag: "",
       notes: full?.notes ?? "",
@@ -70,6 +74,8 @@ export function ProjectList() {
         store.updateTags(tags);
         store.updateNotes(edit.notes);
       }
+      // rename goes through the store so an open project's title stays in sync
+      await renameProjectById(edit.id, edit.name);
       await refreshProjects();
     }
     setEdit(null);
@@ -96,14 +102,26 @@ export function ProjectList() {
 
   return (
     <div className="project-list">
-      <input
-        type="search"
-        className="input"
-        placeholder="Search projects…"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        aria-label="Search projects"
-      />
+      <div className="library-controls">
+        <input
+          type="search"
+          className="input"
+          placeholder="Search patterns…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          aria-label="Search patterns"
+        />
+        <button
+          type="button"
+          className="btn btn-primary btn-small"
+          onClick={() =>
+            window.dispatchEvent(new CustomEvent("ps:open-upload"))
+          }
+          title="Add a new pattern to the library"
+        >
+          ＋ Add
+        </button>
+      </div>
 
       {visible.length === 0 && (
         <p className="panel-empty">
@@ -117,7 +135,9 @@ export function ProjectList() {
         {visible.map((p) => (
           <li
             key={p.id}
-            className={`project-row ${p.id === activeId ? "active" : ""}`}
+            className={`project-row ${p.id === activeId ? "active" : ""} ${
+              p.completed ? "completed" : ""
+            }`}
           >
             <button
               type="button"
@@ -131,7 +151,12 @@ export function ProjectList() {
                 <span className="project-thumb project-thumb-placeholder" />
               )}
               <span className="project-meta">
-                <span className="project-name">{p.name}</span>
+                <span className="project-name">
+                  {p.name}
+                  {p.completed && (
+                    <span className="project-done-badge">✓ Completed</span>
+                  )}
+                </span>
                 <span className="project-sub">
                   {p.rows}×{p.cols} · {p.completed_cells}/{p.total_cells} done
                 </span>
@@ -141,9 +166,21 @@ export function ProjectList() {
             <span className="project-actions">
               <button
                 type="button"
+                className={`btn btn-ghost btn-small ${p.completed ? "btn-done-active" : ""}`}
+                onClick={() => void setProjectDone(p.id, !p.completed)}
+                title={
+                  p.completed
+                    ? "Mark pattern as not completed"
+                    : "Mark whole pattern as completed"
+                }
+              >
+                {p.completed ? "✓ Done" : "Done?"}
+              </button>
+              <button
+                type="button"
                 className="btn btn-ghost btn-small"
                 onClick={() => void beginEdit(p)}
-                title="Edit tags and notes"
+                title="Rename, edit tags and notes"
               >
                 Edit
               </button>
@@ -151,7 +188,7 @@ export function ProjectList() {
                 type="button"
                 className="btn btn-ghost btn-small btn-danger"
                 onClick={() => confirmDelete(p)}
-                title="Delete project"
+                title="Delete pattern"
               >
                 Delete
               </button>
@@ -159,6 +196,18 @@ export function ProjectList() {
 
             {edit?.id === p.id && (
               <div className="project-edit">
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="Pattern name"
+                  aria-label="Pattern name"
+                  value={edit.name}
+                  onChange={(e) =>
+                    setEdit((prev) =>
+                      prev ? { ...prev, name: e.target.value } : prev,
+                    )
+                  }
+                />
                 <div className="tag-toggle-row">
                   {BUILT_IN_TAGS.map((tag) => (
                     <button
