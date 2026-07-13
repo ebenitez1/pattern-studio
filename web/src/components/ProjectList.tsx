@@ -174,7 +174,7 @@ export function ProjectList() {
                     : "Mark whole pattern as completed"
                 }
               >
-                {p.completed ? "✓ Done" : "Done?"}
+                {p.completed ? "✓ Completed" : "Mark as Complete"}
               </button>
               <button
                 type="button"

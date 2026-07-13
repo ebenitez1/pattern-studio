@@ -12,6 +12,7 @@ type Phase =
   | { kind: "idle" }
   | { kind: "uploading"; fileName: string }
   | { kind: "processing"; fileName: string; stage: string; progress: number }
+  | { kind: "success"; fileName: string; rows: number; cols: number }
   | { kind: "error"; message: string };
 
 function projectNameFromFile(fileName: string): string {
@@ -49,6 +50,17 @@ export function UploadDropzone({ onDone }: { onDone?: () => void }) {
             }),
           { ocr },
         );
+        // show the detected pattern size first — once the project opens, this
+        // dropzone may unmount (welcome screen), so the indicator comes before
+        await new Promise<void>((resolve) => {
+          setPhase({
+            kind: "success",
+            fileName: file.name,
+            rows: grid.rows,
+            cols: grid.cols,
+          });
+          setTimeout(resolve, 1600);
+        });
         const thumbnail = gridThumbnailDataUrl(grid);
         await createProject({
           name: projectNameFromFile(file.name),
@@ -140,6 +152,17 @@ export function UploadDropzone({ onDone }: { onDone?: () => void }) {
               style={{ width: `${Math.round(phase.progress * 100)}%` }}
             />
           </div>
+        </div>
+      )}
+
+      {phase.kind === "success" && (
+        <div className="dropzone-progress">
+          <p className="dropzone-title dropzone-success">
+            ✓ Pattern added — {phase.cols} × {phase.rows} cells
+          </p>
+          <p className="dropzone-sub">
+            The grid has been sized to fit your screen.
+          </p>
         </div>
       )}
 

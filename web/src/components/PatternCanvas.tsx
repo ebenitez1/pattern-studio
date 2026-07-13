@@ -290,6 +290,27 @@ export function PatternCanvas() {
     });
   }, [draw]);
 
+  // Fit the whole pattern on screen when a project still has the default
+  // viewport (i.e. it was just created or has never been panned/zoomed).
+  const fitIfDefault = useCallback(() => {
+    const s = useProjectStore.getState();
+    const p = s.project;
+    if (!p) return;
+    const { width, height } = sizeRef.current;
+    if (width === 0 || height === 0) return;
+    const v = s.viewport;
+    if (v.zoom === 1 && v.offsetX === 0 && v.offsetY === 0) {
+      const worldW = p.grid.cols * BASE_CELL;
+      const worldH = p.grid.rows * BASE_CELL;
+      const zoom = clampZoom(Math.min(width / worldW, height / worldH) * 0.95);
+      s.setViewport({
+        zoom,
+        offsetX: (width - worldW * zoom) / 2,
+        offsetY: (height - worldH * zoom) / 2,
+      });
+    }
+  }, []);
+
   // ---- canvas sizing (devicePixelRatio aware) ------------------------------
 
   useEffect(() => {
@@ -305,13 +326,15 @@ export function PatternCanvas() {
       canvas.height = Math.max(1, Math.round(rect.height * dpr));
       canvas.style.width = `${rect.width}px`;
       canvas.style.height = `${rect.height}px`;
+      // if the size only just became known, a pending fit can now happen
+      fitIfDefault();
       requestDraw();
     };
     resize();
     const ro = new ResizeObserver(resize);
     ro.observe(container);
     return () => ro.disconnect();
-  }, [requestDraw]);
+  }, [requestDraw, fitIfDefault]);
 
   // redraw on any relevant store change
   useEffect(() => {
@@ -335,24 +358,9 @@ export function PatternCanvas() {
   const projectId = useProjectStore((s) => s.project?.id ?? null);
   useEffect(() => {
     if (!projectId) return;
-    const s = useProjectStore.getState();
-    const p = s.project;
-    if (!p) return;
-    const v = s.viewport;
-    const { width, height } = sizeRef.current;
-    if (width === 0 || height === 0) return;
-    if (v.zoom === 1 && v.offsetX === 0 && v.offsetY === 0) {
-      const worldW = p.grid.cols * BASE_CELL;
-      const worldH = p.grid.rows * BASE_CELL;
-      const zoom = clampZoom(Math.min(width / worldW, height / worldH) * 0.95);
-      s.setViewport({
-        zoom,
-        offsetX: (width - worldW * zoom) / 2,
-        offsetY: (height - worldH * zoom) / 2,
-      });
-    }
+    fitIfDefault();
     requestDraw();
-  }, [projectId, requestDraw]);
+  }, [projectId, requestDraw, fitIfDefault]);
 
   // clear image cache when switching projects
   useEffect(() => {

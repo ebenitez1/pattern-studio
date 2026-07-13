@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { CurrentProject } from "./CurrentProject";
 import { ProjectList } from "./ProjectList";
 import { SymbolPanel } from "./SymbolPanel";
 import { StatsPanel } from "./StatsPanel";
@@ -33,6 +34,9 @@ function CollapsiblePanel({
 export function Sidebar() {
   return (
     <aside className="sidebar">
+      <CollapsiblePanel title="Current Project" defaultOpen>
+        <CurrentProject />
+      </CollapsiblePanel>
       <CollapsiblePanel title="Projects" defaultOpen>
         <ProjectList />
       </CollapsiblePanel>
