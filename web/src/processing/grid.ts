@@ -312,9 +312,10 @@ export function linesToBoundaries(
       bestM = g;
     }
   }
-  // the modal gap must DOMINATE the gap distribution — a minority mode means
-  // the peaks are mostly noise (e.g. surviving text), not a ruled grid
-  if (bestCnt < Math.max(4, Math.ceil(gaps.length * 0.4))) return null;
+  // the modal gap must be a substantial mode — noise and missing lines dilute
+  // it, so require a quarter of the gaps rather than a strict majority (the
+  // asymmetric pitch cross-check downstream guards against false positives)
+  if (bestCnt < Math.max(4, Math.ceil(gaps.length * 0.25))) return null;
   let sum = 0;
   let n = 0;
   for (const h of gaps) {
@@ -340,12 +341,42 @@ export function linesToBoundaries(
       anchor = p;
     }
   }
-  if (anchor < 0 || support < Math.max(5, sorted.length * 0.6)) return null;
+  if (anchor < 0 || support < Math.max(5, sorted.length * 0.5)) return null;
+
+  // Refine pitch + anchor by least squares over the matched lines — the modal
+  // gap alone drifts by half a cell across a large grid, which would shear the
+  // outer columns. Far-apart matched lines pin the pitch precisely.
+  let mRef = m;
+  let aRef = anchor;
+  for (let iter = 0; iter < 2; iter++) {
+    const ks: number[] = [];
+    const qs: number[] = [];
+    for (const q of sorted) {
+      const k = Math.round((q - aRef) / mRef);
+      if (Math.abs(q - (aRef + k * mRef)) <= tol) {
+        ks.push(k);
+        qs.push(q);
+      }
+    }
+    if (ks.length < 5) break;
+    const kMean = ks.reduce((a, b) => a + b, 0) / ks.length;
+    const qMean = qs.reduce((a, b) => a + b, 0) / qs.length;
+    let num = 0;
+    let den = 0;
+    for (let i = 0; i < ks.length; i++) {
+      num += (ks[i]! - kMean) * (qs[i]! - qMean);
+      den += (ks[i]! - kMean) ** 2;
+    }
+    if (den <= 0) break;
+    mRef = num / den;
+    aRef = qMean - kMean * mRef;
+    if (mRef < 4) return null;
+  }
 
   // full comb across the axis; content-based trims cut it to the grid later
-  const start = anchor - Math.floor(anchor / m) * m;
+  const start = aRef - Math.floor(aRef / mRef) * mRef;
   const out: number[] = [];
-  for (let p = start; p <= length + 0.5; p += m) out.push(Math.round(p));
+  for (let p = start; p <= length + 0.5; p += mRef) out.push(Math.round(p));
   const cells = out.length - 1;
   if (cells < 4 || cells > 250) return null;
   return out;
@@ -747,7 +778,7 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
       let max = 0;
       for (let i = 0; i < cover.length; i++) max = Math.max(max, cover[i]!);
       if (max <= 0) return [];
-      const thr = max * 0.35;
+      const thr = max * 0.2;
       const peaks: number[] = [];
       let runStart = -1;
       for (let i = 0; i <= cover.length; i++) {
@@ -769,9 +800,11 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
     const colResult = combBoundaries(colScore, width);
     const rowResult = combBoundaries(rowScore, height);
 
-    // Cross-check: when physical ruled lines were found and the statistical
-    // pitch disagrees with them by > 25%, the statistics were fooled (e.g. by
-    // printed codes on every cell) — trust the real lines instead.
+    // Cross-check: dense printed text fools the statistical pitch toward a
+    // SMALLER (sub-cell) value, never a larger one — so prefer the physical
+    // ruled lines only when they say the cells are significantly bigger than
+    // the statistics claim. If the line detector itself caught text (smaller
+    // pitch than statistics), keep the statistics.
     const medGap = (b: number[]): number => {
       const gaps = b.slice(1).map((v, i) => v - b[i]!);
       return gaps.sort((a, z) => a - z)[Math.floor(gaps.length / 2)]!;
@@ -786,8 +819,8 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
       preferRuled =
         cpx === null ||
         cpy === null ||
-        Math.abs(cpx - rpx) > 0.25 * rpx ||
-        Math.abs(cpy - rpy) > 0.25 * rpy;
+        cpx < 0.75 * rpx ||
+        cpy < 0.75 * rpy;
     }
 
     let colBoundaries: number[];
