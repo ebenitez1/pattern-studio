@@ -31,6 +31,8 @@ export interface GridDebug {
   colExtent: [number, number];
   rowExtent: [number, number];
   usedFallback: boolean;
+  /** true when the ruled grid lines were detected and used directly */
+  usedRuled?: boolean;
 }
 
 // --- pure signal helpers (unit-testable, no opencv) -----------------------
@@ -275,6 +277,78 @@ export function combBoundaries(
     teeth,
     support: support.map((s) => Math.round(s)),
   };
+}
+
+/**
+ * Turn detected ruled-line positions into a full comb of cell boundaries.
+ * Lines through dark regions are often invisible, so instead of requiring
+ * every line we require CONSISTENCY: the modal gap between detected lines is
+ * the pitch, the best-supported line anchors the phase, and the comb is laid
+ * across the whole axis (later trimmed to the grid by bead/checker content).
+ * Returns null when the peaks don't agree on a single pitch — no ruled grid.
+ */
+export function linesToBoundaries(
+  peaks: number[],
+  length: number,
+): number[] | null {
+  if (peaks.length < 5) return null;
+  const sorted = [...peaks].sort((a, b) => a - b);
+
+  const gaps: number[] = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const g = sorted[i]! - sorted[i - 1]!;
+    if (g >= 5 && g <= length / 4) gaps.push(g);
+  }
+  if (gaps.length < 4) return null;
+
+  // modal gap = pitch (cluster within ±2px)
+  let bestM = 0;
+  let bestCnt = 0;
+  for (const g of gaps) {
+    let c = 0;
+    for (const h of gaps) if (Math.abs(h - g) <= 2) c++;
+    if (c > bestCnt) {
+      bestCnt = c;
+      bestM = g;
+    }
+  }
+  // the modal gap must DOMINATE the gap distribution — a minority mode means
+  // the peaks are mostly noise (e.g. surviving text), not a ruled grid
+  if (bestCnt < Math.max(4, Math.ceil(gaps.length * 0.4))) return null;
+  let sum = 0;
+  let n = 0;
+  for (const h of gaps) {
+    if (Math.abs(h - bestM) <= 2) {
+      sum += h;
+      n++;
+    }
+  }
+  const m = sum / n;
+
+  // anchor = the line position most peaks agree with (p + k·m)
+  const tol = Math.max(3, m * 0.15);
+  let anchor = -1;
+  let support = 0;
+  for (const p of sorted) {
+    let c = 0;
+    for (const q of sorted) {
+      const k = Math.round((q - p) / m);
+      if (Math.abs(q - (p + k * m)) <= tol) c++;
+    }
+    if (c > support) {
+      support = c;
+      anchor = p;
+    }
+  }
+  if (anchor < 0 || support < Math.max(5, sorted.length * 0.6)) return null;
+
+  // full comb across the axis; content-based trims cut it to the grid later
+  const start = anchor - Math.floor(anchor / m) * m;
+  const out: number[] = [];
+  for (let p = start; p <= length + 0.5; p += m) out.push(Math.round(p));
+  const cells = out.length - 1;
+  if (cells < 4 || cells > 250) return null;
+  return out;
 }
 
 /** Longest contiguous run of `true` in a boolean array → [start, end] indices. */
@@ -600,6 +674,7 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
   const gray = new cv.Mat();
   const gradX = new cv.Mat();
   const gradY = new cv.Mat();
+  const binary = new cv.Mat();
 
   try {
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
@@ -610,19 +685,50 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
     const dy = gradY.data32F;
     const rgba = imageData.data;
 
+    // Ruled-grid pass. A short morphological open (longer than any printed
+    // code cluster ~20-30px, shorter than a cell) erases text but keeps grid
+    // lines — even lines broken by dark cells survive as multi-cell runs
+    // across the lighter cells. Rows/columns with high surviving coverage are
+    // the ruled lines.
+    cv.adaptiveThreshold(
+      gray,
+      binary,
+      255,
+      cv.ADAPTIVE_THRESH_MEAN_C,
+      cv.THRESH_BINARY_INV,
+      Math.max(11, Math.floor(Math.min(width, height) / 40) | 1),
+      5,
+    );
+    const openLen = Math.max(24, Math.floor(Math.min(width, height) * 0.03));
+    const horizMask = new cv.Mat();
+    const vertMask = new cv.Mat();
+    const hK = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(openLen, 1));
+    cv.morphologyEx(binary, horizMask, cv.MORPH_OPEN, hK);
+    hK.delete();
+    const vK = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, openLen));
+    cv.morphologyEx(binary, vertMask, cv.MORPH_OPEN, vK);
+    vK.delete();
+    const hData = horizMask.data;
+    const vData = vertMask.data;
+
     const colScore = new Float64Array(width); // vertical-edge strength / column
     const rowScore = new Float64Array(height); // horizontal-edge strength / row
     const colNonWhite = new Float64Array(width);
     const rowNonWhite = new Float64Array(height);
+    const rowCover = new Float64Array(height); // opened-mask coverage per row
+    const colCover = new Float64Array(width);
 
     for (let y = 0; y < height; y++) {
       const rowOff = y * width;
       let rs = 0;
       let rw = 0;
+      let rc = 0;
       for (let x = 0; x < width; x++) {
         const off = rowOff + x;
         colScore[x] = colScore[x]! + Math.abs(dx[off]!);
         rs += Math.abs(dy[off]!);
+        if (hData[off]! > 0) rc++;
+        if (vData[off]! > 0) colCover[x] = colCover[x]! + 1;
         const p = off * 4;
         if (rgba[p]! < 235 || rgba[p + 1]! < 235 || rgba[p + 2]! < 235) {
           rw++;
@@ -631,16 +737,76 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
       }
       rowScore[y] = rs;
       rowNonWhite[y] = rw;
+      rowCover[y] = rc;
     }
+    horizMask.delete();
+    vertMask.delete();
 
+    // line positions = centroids of runs of high-coverage rows/columns
+    const coverPeaks = (cover: Float64Array): number[] => {
+      let max = 0;
+      for (let i = 0; i < cover.length; i++) max = Math.max(max, cover[i]!);
+      if (max <= 0) return [];
+      const thr = max * 0.35;
+      const peaks: number[] = [];
+      let runStart = -1;
+      for (let i = 0; i <= cover.length; i++) {
+        const on = i < cover.length && cover[i]! >= thr;
+        if (on && runStart < 0) runStart = i;
+        if (!on && runStart >= 0) {
+          peaks.push(Math.round((runStart + i - 1) / 2));
+          runStart = -1;
+        }
+      }
+      return peaks;
+    };
+    const rowPeaks = coverPeaks(rowCover);
+    const colPeaks = coverPeaks(colCover);
+    const ruledRows = linesToBoundaries(rowPeaks, height);
+    const ruledCols = linesToBoundaries(colPeaks, width);
+
+    // statistical pitch detection (proven on charts without heavy text)
     const colResult = combBoundaries(colScore, width);
     const rowResult = combBoundaries(rowScore, height);
+
+    // Cross-check: when physical ruled lines were found and the statistical
+    // pitch disagrees with them by > 25%, the statistics were fooled (e.g. by
+    // printed codes on every cell) — trust the real lines instead.
+    const medGap = (b: number[]): number => {
+      const gaps = b.slice(1).map((v, i) => v - b[i]!);
+      return gaps.sort((a, z) => a - z)[Math.floor(gaps.length / 2)]!;
+    };
+    const ruledOk = !!(ruledRows && ruledCols);
+    let preferRuled = false;
+    if (ruledOk) {
+      const rpx = medGap(ruledCols!);
+      const rpy = medGap(ruledRows!);
+      const cpx = colResult?.pitch ?? null;
+      const cpy = rowResult?.pitch ?? null;
+      preferRuled =
+        cpx === null ||
+        cpy === null ||
+        Math.abs(cpx - rpx) > 0.25 * rpx ||
+        Math.abs(cpy - rpy) > 0.25 * rpy;
+    }
 
     let colBoundaries: number[];
     let rowBoundaries: number[];
     let usedFallback = false;
+    let usedRuled = false;
 
-    if (
+    if (preferRuled) {
+      usedRuled = true;
+      const trimmed = trimToBeadExtent(ruledCols!, ruledRows!, rgba, width);
+      const stripped = stripUniformEdges(
+        trimmed.colTeeth,
+        trimmed.rowTeeth,
+        rgba,
+        width,
+      );
+      colBoundaries = stripped.colTeeth;
+      rowBoundaries = stripped.rowTeeth;
+    } else if (
       colResult &&
       rowResult &&
       colResult.teeth.length >= 3 &&
@@ -652,7 +818,7 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
         rgba,
         width,
       );
-      // strip uniform-coloured axis-label bands (e.g. periwinkle number strips)
+      // strip uniform-coloured axis-label bands (e.g. periwinkle strips)
       const stripped = stripUniformEdges(
         trimmed.colTeeth,
         trimmed.rowTeeth,
@@ -663,20 +829,28 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
       rowBoundaries = stripped.rowTeeth;
     } else {
       usedFallback = true;
-      colBoundaries = colResult?.teeth ?? fallbackAxis(colScore, colNonWhite, width);
-      rowBoundaries = rowResult?.teeth ?? fallbackAxis(rowScore, rowNonWhite, height);
+      colBoundaries =
+        colResult?.teeth ?? fallbackAxis(colScore, colNonWhite, width);
+      rowBoundaries =
+        rowResult?.teeth ?? fallbackAxis(rowScore, rowNonWhite, height);
     }
 
+    const medianGap = (b: number[]): number | null => {
+      if (b.length < 2) return null;
+      const gaps = b.slice(1).map((v, i) => v - b[i]!);
+      return gaps.sort((a, z) => a - z)[Math.floor(gaps.length / 2)]!;
+    };
     const debug: GridDebug = {
       width,
       height,
-      pitchX: colResult?.pitch ?? null,
-      pitchY: rowResult?.pitch ?? null,
+      pitchX: medianGap(colBoundaries),
+      pitchY: medianGap(rowBoundaries),
       cols: colBoundaries.length - 1,
       rows: rowBoundaries.length - 1,
       colExtent: [colBoundaries[0]!, colBoundaries[colBoundaries.length - 1]!],
       rowExtent: [rowBoundaries[0]!, rowBoundaries[rowBoundaries.length - 1]!],
       usedFallback,
+      usedRuled,
     };
     (globalThis as unknown as { __PS_GRID_DEBUG__?: GridDebug }).__PS_GRID_DEBUG__ =
       debug;
@@ -687,6 +861,7 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
     gray.delete();
     gradX.delete();
     gradY.delete();
+    binary.delete();
   }
 }
 
