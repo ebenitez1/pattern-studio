@@ -112,6 +112,64 @@ function combAverage(signal: Float64Array, P: number): number {
   return best;
 }
 
+/** Average edge strength of a pitch-P comb at one specific phase. */
+function combPhaseAverage(signal: Float64Array, P: number, phase: number): number {
+  const n = signal.length;
+  let s = 0;
+  let cnt = 0;
+  for (let pos = phase; pos < n; pos += P) {
+    const xi = Math.round(pos);
+    let m = 0;
+    for (let dd = -1; dd <= 1; dd++) {
+      const j = xi + dd;
+      if (j >= 0 && j < n && signal[j]! > m) m = signal[j]!;
+    }
+    s += m;
+    cnt++;
+  }
+  return cnt > 0 ? s / cnt : 0;
+}
+
+/**
+ * Half-pitch artifact check. A checkerboard "no stitch" texture has sub-square
+ * edges at exactly half the cell pitch, so the estimator can return pitch/2
+ * with full comb support. Signature: at the halved pitch the teeth ALTERNATE
+ * strong (real grid line) / weak (checker-only edge), whereas at a true pitch
+ * every tooth is a real line. So: find the doubled comb's best phase; if the
+ * opposite phase (best + pitch) is much weaker, the pitch was halved — double.
+ */
+function undoHalfPitch(
+  signal: Float64Array,
+  pitch: number,
+  maxPitch: number,
+): number {
+  for (let iter = 0; iter < 2; iter++) {
+    const dbl = pitch * 2;
+    if (dbl > maxPitch) break;
+    let best = -1;
+    let bestPhase = 0;
+    const step = Math.max(1, Math.round(pitch / 20));
+    for (let ph = 0; ph < dbl; ph += step) {
+      const s = combPhaseAverage(signal, dbl, ph);
+      if (s > best) {
+        best = s;
+        bestPhase = ph;
+      }
+    }
+    if (best <= 0) break;
+    const other = combPhaseAverage(signal, dbl, (bestPhase + pitch) % dbl);
+    // Measured on real charts: at a TRUE pitch the opposite phase also lands
+    // on grid lines (ratio 0.86–0.99); at a checker-halved pitch it lands on
+    // checker-only edges (ratio ~0.60). 0.72 sits centred in the gap.
+    if (other < 0.72 * best) {
+      pitch = dbl;
+    } else {
+      break;
+    }
+  }
+  return pitch;
+}
+
 /**
  * Fundamental cell pitch. Autocorrelation gives a robust ballpark pitch L (the
  * first prominent peak), but on sparse fine grids it can lock onto a 2×/3×
@@ -167,10 +225,10 @@ export function estimatePitch(
   for (let k = 4; k >= 2; k--) {
     const sub = Math.round(L / k);
     if (sub >= minPitch && combAverage(signal, sub) >= 0.8 * baseAvg) {
-      return sub;
+      return undoHalfPitch(signal, sub, hi);
     }
   }
-  return L;
+  return undoHalfPitch(signal, L, hi);
 }
 
 /** Content bounding span from a non-white-count projection (fallback path). */
@@ -935,6 +993,12 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
     };
     (globalThis as unknown as { __PS_GRID_DEBUG__?: GridDebug }).__PS_GRID_DEBUG__ =
       debug;
+    (globalThis as unknown as Record<string, unknown>).__PS_GRID_SIGNALS__ = {
+      colScore: Array.from(colScore),
+      rowScore: Array.from(rowScore),
+      colCover: Array.from(colCover),
+      rowCover: Array.from(rowCover),
+    };
 
     return { rowBoundaries, colBoundaries };
   } finally {
