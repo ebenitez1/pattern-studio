@@ -382,10 +382,20 @@ export function linesToBoundaries(
   return out;
 }
 
-/** Longest contiguous run of `true` in a boolean array → [start, end] indices. */
-function longestTrueRun(a: boolean[]): [number, number] {
-  let bs = 0;
-  let be = -1;
+/**
+ * Longest run of `true` in a boolean array, merging neighbouring runs across
+ * gaps of up to `maxGap` when BOTH runs are substantial (≥ minSegment) — a
+ * pattern legitimately has fully-empty rows/columns between its parts, which
+ * must not cut the grid short; but a 1–2-line blob past a gap (a legend chip
+ * row, a stray mark) must not get pulled in.
+ */
+function longestTrueRun(
+  a: boolean[],
+  maxGap = 2,
+  minSegment = 3,
+): [number, number] {
+  // collect maximal contiguous runs
+  const runs: [number, number][] = [];
   let i = 0;
   while (i < a.length) {
     if (!a[i]) {
@@ -394,13 +404,46 @@ function longestTrueRun(a: boolean[]): [number, number] {
     }
     let j = i;
     while (j + 1 < a.length && a[j + 1]) j++;
-    if (j - i > be - bs) {
-      bs = i;
-      be = j;
-    }
+    runs.push([i, j]);
     i = j + 1;
   }
-  return [bs, be < bs ? bs : be];
+  if (runs.length === 0) return [0, 0];
+
+  // merge adjacent substantial runs separated by small gaps
+  const merged: [number, number][] = [runs[0]!];
+  for (let k = 1; k < runs.length; k++) {
+    const prev = merged[merged.length - 1]!;
+    const cur = runs[k]!;
+    const gap = cur[0] - prev[1] - 1;
+    const prevLen = prev[1] - prev[0] + 1;
+    const curLen = cur[1] - cur[0] + 1;
+    if (gap <= maxGap && prevLen >= minSegment && curLen >= minSegment) {
+      prev[1] = cur[1];
+    } else {
+      merged.push(cur);
+    }
+  }
+
+  let best = merged[0]!;
+  for (const r of merged) if (r[1] - r[0] > best[1] - best[0]) best = r;
+  return best;
+}
+
+/**
+ * Ensure a comb covers the full axis: a grid drawn flush against the image
+ * edge can leave the first/last cell outside the detected teeth (e.g. phase 39
+ * with pitch 40 orphans the whole first row). Prepend/append clamped teeth
+ * when a near-full cell of space is uncovered.
+ */
+function extendComb(teeth: number[], length: number): number[] {
+  if (teeth.length < 2) return teeth;
+  const out = teeth.slice();
+  const pitch =
+    (out[out.length - 1]! - out[0]!) / Math.max(1, out.length - 1);
+  if (out[0]! >= pitch * 0.6) out.unshift(Math.max(0, Math.round(out[0]! - pitch)));
+  if (length - out[out.length - 1]! >= pitch * 0.6)
+    out.push(Math.min(length, Math.round(out[out.length - 1]! + pitch)));
+  return out;
 }
 
 /**
@@ -830,7 +873,12 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
 
     if (preferRuled) {
       usedRuled = true;
-      const trimmed = trimToBeadExtent(ruledCols!, ruledRows!, rgba, width);
+      const trimmed = trimToBeadExtent(
+        extendComb(ruledCols!, width),
+        extendComb(ruledRows!, height),
+        rgba,
+        width,
+      );
       const stripped = stripUniformEdges(
         trimmed.colTeeth,
         trimmed.rowTeeth,
@@ -846,8 +894,8 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
       rowResult.teeth.length >= 3
     ) {
       const trimmed = trimToBeadExtent(
-        colResult.teeth,
-        rowResult.teeth,
+        extendComb(colResult.teeth, width),
+        extendComb(rowResult.teeth, height),
         rgba,
         width,
       );

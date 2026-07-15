@@ -100,6 +100,7 @@ module) is a future task.
 
 ## Changelog
 
+- 2026-07-15 — **Flush-edge grids and split patterns no longer cut off.** Two extent fixes in `grid.ts`: (1) `extendComb` prepends/appends a grid boundary when the detected comb leaves ≥0.6× a cell pitch of image uncovered at either end — charts whose grid sits flush against the image edge (common in Perler exports with a side legend panel) were losing their first row/column; (2) extent trimming now merges content runs across gaps of up to 2 empty rows/columns **when both sides are substantial (≥3 lines)** — a pattern part detached from the main figure (e.g. an ear, a floating piece) was being discarded as outside the grid, while the substantial-segment requirement keeps legend chip rows from being pulled in. Verified on a flush-edge 36×38 replica with right-side legend, sparse top row, and an empty interior column (previously 33×37, now exactly 36×38 with all 6 top-row beads); all five reference charts re-run unchanged and exact (34×34/1024/11 with identical per-colour counts, 22×21/265/12, 34×34/767/6, 32×32/703, 45×47/1250).
 - 2026-07-05 — Initial build: monorepo scaffolded; shared-core written and typechecked; backend, web, and mobile implemented.
 - 2026-07-05 — Pushed to GitHub as private repo `ebenitez1/pattern-studio`.
 - 2026-07-05 — Made repo public; added GitHub Pages deploy workflow for the web app (relative Vite base).
