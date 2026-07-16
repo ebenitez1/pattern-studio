@@ -86,7 +86,9 @@ export function findPeaks(
 
 /** Best-phase average edge strength of a pitch-P comb — high when every tooth
  *  lands on a real grid line (P is the cell pitch or a multiple of it), low for
- *  a sub-cell pitch whose teeth fall between lines. Used to verify a candidate. */
+ *  a sub-cell pitch whose teeth fall between lines. Used to verify a candidate.
+ *  Assumes the signal has been outlier-clipped (see estimatePitch), otherwise a
+ *  sparse harmonic comb can cherry-pick a few very strong rows and win. */
 function combAverage(signal: Float64Array, P: number): number {
   const n = signal.length;
   const sampleMax = (pos: number): number => {
@@ -179,12 +181,24 @@ function undoHalfPitch(
  * the check (a half-pitch comb falls between lines) and keeps L.
  */
 export function estimatePitch(
-  signal: Float64Array,
+  rawSignal: Float64Array,
   minPitch: number,
   maxPitch: number,
 ): number | null {
-  const n = signal.length;
+  const n = rawSignal.length;
   if (n < minPitch * 2) return null;
+
+  // Clip extreme outliers first: bold header/legend/label rows tower over the
+  // grid lines, dominate the autocorrelation, and let a sparse harmonic comb
+  // cherry-pick them to out-average the true pitch. After clipping at the 95th
+  // percentile no single row is worth more than a strong grid line.
+  const sorted = Array.from(rawSignal).sort((a, b) => a - b);
+  const cap = sorted[Math.floor(0.95 * (sorted.length - 1))]!;
+  const signal = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    signal[i] = cap > 0 ? Math.min(rawSignal[i]!, cap) : rawSignal[i]!;
+  }
+
   let mean = 0;
   for (let i = 0; i < n; i++) mean += signal[i]!;
   mean /= n;
@@ -204,31 +218,81 @@ export function estimatePitch(
   }
   if (globalMax <= 0) return null;
 
-  // autocorrelation ballpark: first prominent local-max after the initial decay
-  let lag = minPitch;
-  while (lag < hi && r[lag + 1]! < r[lag]!) lag++;
-  let L = -1;
+  // Candidate lags: every prominent autocorrelation local-max. The FIRST
+  // prominent peak is not reliable — secondary edges (bead insets, printed
+  // codes) put sidebands at pitch±d that can precede the true pitch — so all
+  // prominent peaks compete and the comb decides which lands on real lines.
   const prominence = globalMax * 0.5;
-  for (; lag < hi; lag++) {
-    if (r[lag]! >= prominence && r[lag]! >= r[lag - 1]! && r[lag]! >= r[lag + 1]!) {
-      L = lag;
-      break;
+  const candidates: number[] = [];
+  for (let l = minPitch + 1; l < hi; l++) {
+    if (r[l]! >= prominence && r[l]! >= r[l - 1]! && r[l]! >= r[l + 1]!) {
+      candidates.push(l);
     }
   }
-  if (L < 0) {
-    for (let l = minPitch; l <= hi; l++) if (r[l]! > (L < 0 ? -1 : r[L]!)) L = l;
+  if (candidates.length === 0) {
+    let L = -1;
+    for (let l = minPitch; l <= hi; l++) if (L < 0 || r[l]! > r[L]!) L = l;
+    if (L < minPitch) return null;
+    candidates.push(L);
   }
-  if (L < minPitch) return null;
 
-  // comb-verify finer sub-multiples: take the smallest whose comb still aligns
-  const baseAvg = combAverage(signal, L);
-  for (let k = 4; k >= 2; k--) {
-    const sub = Math.round(L / k);
-    if (sub >= minPitch && combAverage(signal, sub) >= 0.8 * baseAvg) {
-      return undoHalfPitch(signal, sub, hi);
+  // Reduce each candidate to its fundamental (comb-verified sub-multiples),
+  // then score each fundamental by COMB ENERGY: best-phase sum of
+  // (tooth strength - signal mean). Off-line teeth count NEGATIVE, so a
+  // sideband pitch (most teeth on nothing) and a sparse harmonic (few teeth)
+  // both lose to the true pitch (every tooth an above-mean line). Averages or
+  // raw sums both fail here: an average lets a sparse comb cherry-pick a few
+  // strong rows; a raw sum lets a fine comb pad itself with texture noise.
+  const combEnergy = (P: number): number => {
+    const sampleMax = (pos: number): number => {
+      const xi = Math.round(pos);
+      let m = 0;
+      for (let dd = -1; dd <= 1; dd++) {
+        const j = xi + dd;
+        if (j >= 0 && j < n && signal[j]! > m) m = signal[j]!;
+      }
+      return m;
+    };
+    let best = -Infinity;
+    const phaseStep = P > 40 ? Math.ceil(P / 40) : 1;
+    for (let phase = 0; phase < P; phase += phaseStep) {
+      let s = 0;
+      for (let pos = phase; pos < n; pos += P) s += sampleMax(pos) - mean;
+      if (s > best) best = s;
     }
+    return best;
+  };
+
+  const scored: { fund: number; score: number }[] = [];
+  const seenFunds = new Set<number>();
+  for (const L of candidates) {
+    let fund = L;
+    const baseAvg = combAverage(signal, L);
+    const kMax = Math.min(32, Math.floor(L / minPitch));
+    for (let k = kMax; k >= 2; k--) {
+      const sub = Math.round(L / k);
+      if (sub >= minPitch && combAverage(signal, sub) >= 0.8 * baseAvg) {
+        fund = sub;
+        break;
+      }
+    }
+    if (seenFunds.has(fund)) continue;
+    seenFunds.add(fund);
+    scored.push({ fund, score: combEnergy(fund) });
   }
-  return undoHalfPitch(signal, L, hi);
+  if (scored.length === 0) return null;
+
+  let maxScore = -Infinity;
+  for (const s of scored) if (s.score > maxScore) maxScore = s.score;
+  // near-tie (a 2x harmonic collects the same lines): prefer the finer pitch
+  let bestPitch = -1;
+  for (const s of scored) {
+    const nearTop =
+      maxScore > 0 ? s.score >= 0.98 * maxScore : s.score >= maxScore;
+    if (nearTop && (bestPitch < 0 || s.fund < bestPitch)) bestPitch = s.fund;
+  }
+  if (bestPitch < minPitch) return null;
+  return undoHalfPitch(signal, bestPitch, hi);
 }
 
 /** Content bounding span from a non-white-count projection (fallback path). */
@@ -288,7 +352,16 @@ export function combBoundaries(
   teeth: number[];
   support: number[];
 } | null {
-  const sm = smooth(score, 1);
+  const smRaw = smooth(score, 1);
+  // Clip extreme outliers (bold header/legend/label rows) BEFORE phase
+  // selection too: an unclipped monster row 13px off the grid can drag the
+  // comb's best phase onto a sideband, misaligning every boundary.
+  const sortedSm = Array.from(smRaw).sort((a, b) => a - b);
+  const smCap = sortedSm[Math.floor(0.95 * (sortedSm.length - 1))]!;
+  const sm = new Float64Array(length);
+  for (let i = 0; i < length; i++) {
+    sm[i] = smCap > 0 ? Math.min(smRaw[i]!, smCap) : smRaw[i]!;
+  }
   // Cap resolution at ~130 cells/axis: excludes sub-cell texture (e.g. a fine
   // checkerboard background) on large scans, while small images still allow a
   // few-pixel cell pitch.
@@ -790,6 +863,13 @@ export function trimToBeadExtent(
   }
   const [cs, ce] = longestTrueRun(colHas);
   const [rs, re] = longestTrueRun(rowHas);
+  (globalThis as unknown as Record<string, unknown>).__PS_TRIM__ = {
+    rowHas: rowHas.slice(),
+    colHas: colHas.slice(),
+    rowTeeth: rowTeeth.slice(),
+    colTeeth: colTeeth.slice(),
+    runs: { cols: [cs, ce], rows: [rs, re] },
+  };
   return {
     colTeeth: colTeeth.slice(cs, ce + 2),
     rowTeeth: rowTeeth.slice(rs, re + 2),
@@ -951,9 +1031,63 @@ export async function detectGrid(img: LoadedImage): Promise<GridBoundaries> {
       colResult.teeth.length >= 3 &&
       rowResult.teeth.length >= 3
     ) {
+      // Re-anchor the statistical comb's PHASE on the physical line-coverage
+      // signal: dense printed codes put strong edges a fixed offset from every
+      // line (a sideband), and the edge-projection comb can lock onto that
+      // offset, misaligning every boundary. The morph-opened coverage signal
+      // has text erased, so real lines dominate it. Keep the comb's pitch;
+      // shift its phase only when the coverage clearly prefers another one.
+      const rephase = (
+        teeth: number[],
+        pitch: number,
+        cover: Float64Array,
+        length: number,
+      ): number[] => {
+        if (teeth.length < 3 || pitch < 4) return teeth;
+        const winMax = (pos: number): number => {
+          const xi = Math.round(pos);
+          let m = 0;
+          for (let dd = -2; dd <= 2; dd++) {
+            const j = xi + dd;
+            if (j >= 0 && j < cover.length && cover[j]! > m) m = cover[j]!;
+          }
+          return m;
+        };
+        const phaseSum = (ph: number): number => {
+          let s = 0;
+          for (let p = ph; p < length; p += pitch) s += winMax(p);
+          return s;
+        };
+        let bestPh = 0;
+        let bestS = -1;
+        for (let ph = 0; ph < pitch; ph++) {
+          const s = phaseSum(ph);
+          if (s > bestS) {
+            bestS = s;
+            bestPh = ph;
+          }
+        }
+        const curPh = ((teeth[0]! % pitch) + pitch) % pitch;
+        if (bestPh === curPh) return teeth;
+        // only override when the coverage decisively prefers the new phase —
+        // on charts with weak/no ruled lines the coverage is noise, and the
+        // comb's own phase must stand
+        if (bestS < 1.3 * phaseSum(curPh)) return teeth;
+        const out: number[] = [];
+        for (let p = bestPh; p <= length + 0.5; p += pitch) {
+          out.push(Math.round(p));
+        }
+        return out.length >= 3 ? out : teeth;
+      };
       const trimmed = trimToBeadExtent(
-        extendComb(colResult.teeth, width),
-        extendComb(rowResult.teeth, height),
+        extendComb(
+          rephase(colResult.teeth, colResult.pitch, colCover, width),
+          width,
+        ),
+        extendComb(
+          rephase(rowResult.teeth, rowResult.pitch, rowCover, height),
+          height,
+        ),
         rgba,
         width,
       );
