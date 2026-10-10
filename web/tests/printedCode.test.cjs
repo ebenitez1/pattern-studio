@@ -52,3 +52,28 @@ test('enclosed blank cell is excluded from symbols, totals, and completion',()=>
   assert.equal(stats.completed,8);
   assert.equal(stats.completion,1);
 });
+
+test('low-contrast E13 codes on purple remain tracked at multiple sizes',()=>{
+  for(const crop of require('./fixtures/e13-crops.json')) {
+    const original=new Uint8ClampedArray(crop.pixels);
+    for(const scale of [1,0.75,0.5]) {
+      const width=Math.round(crop.width*scale),height=Math.round(crop.height*scale);
+      const data=new Uint8ClampedArray(width*height*4);
+      for(let y=0;y<height;y++)for(let x=0;x<width;x++) {
+        const px=Math.min(crop.width-1,Math.floor((x+0.5)/scale));
+        const py=Math.min(crop.height-1,Math.floor((y+0.5)/scale));
+        const p=(py*crop.width+px)*4;
+        data.set(original.slice(p,p+4),(y*width+x)*4);
+      }
+      assert.equal(hasPrintedCode(data,width,{x:0,y:0,w:width,h:height}),true,'E13 at scale '+scale);
+    }
+  }
+});
+test('E13 survives symbol extraction and contributes to the stitch total',()=>{
+  const crop=require('./fixtures/e13-crops.json')[0];
+  const width=crop.width,height=crop.height,data=new Uint8ClampedArray(crop.pixels);
+  const {grid}=recognizeSymbols({width,height,imageData:{width,height,data}},{colBoundaries:[0,width],rowBoundaries:[0,height]});
+  assert.notEqual(grid.cells[0].symbol_id,'bg');
+  assert.equal(grid.symbols.length,1);
+  assert.equal(computeStats(grid,{}).total_cells,1);
+});

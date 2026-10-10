@@ -28,7 +28,10 @@ export function hasPrintedCode(
   for (const lum of lums) if (Math.floor(lum / 16) === mode) { sum += lum; count++; }
   const background = sum / count;
   // Light text on dark cells and dark text on light/coloured cells both qualify.
-  const mask = Uint8Array.from(lums, lum => Math.abs(lum - background) >= 55 ? 1 : 0);
+  // Dark codes on saturated fills (e.g. E13 purple) can differ by only 24–50
+  // luminance levels. A high cutoff silently removes an entire colour. Keep
+  // these strokes; the component geometry below rejects borders and shadows.
+  const mask = Uint8Array.from(lums, lum => Math.abs(lum - background) >= 24 ? 1 : 0);
   let strokes = 0;
   for (let i = 0; i < mask.length; i++) {
     if (mask[i] !== 1) continue;
