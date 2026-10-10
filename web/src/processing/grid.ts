@@ -162,8 +162,9 @@ function undoHalfPitch(
     const other = combPhaseAverage(signal, dbl, (bestPhase + pitch) % dbl);
     // Measured on real charts: at a TRUE pitch the opposite phase also lands
     // on grid lines (ratio 0.86–0.99); at a checker-halved pitch it lands on
-    // checker-only edges (ratio ~0.60). 0.72 sits centred in the gap.
-    if (other < 0.72 * best) {
+    // checker/text-only edges (ratio ~0.60–0.78). Keep a margin below
+    // true grid lines so printed codes cannot create extra columns.
+    if (other < 0.8 * best) {
       pitch = dbl;
     } else {
       break;
