@@ -88,8 +88,8 @@ export async function runOcr(
   try {
     await worker.setParameters({
       tessedit_char_whitelist: WHITELIST,
-      // treat each crop as a single character
-      tessedit_pageseg_mode: Tesseract.PSM.SINGLE_CHAR,
+      // Codes can contain several letters and digits (e.g. B5200).
+      tessedit_pageseg_mode: Tesseract.PSM.SINGLE_WORD,
     });
 
     const fullCanvas = document.createElement("canvas");
@@ -105,7 +105,7 @@ export async function runOcr(
       const text = data.text.trim();
       if (text && data.confidence > 45) {
         const sym = grid.symbols.find((s) => s.id === id);
-        if (sym) sym.ocr_text = text.slice(0, 3);
+        if (sym) sym.ocr_text = text.replace(/\s+/g, "");
       }
       onProgress?.((i + 1) / glyphIds.length);
     }

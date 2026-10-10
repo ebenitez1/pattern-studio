@@ -5,6 +5,7 @@
 import Dexie, { type Table } from "dexie";
 import {
   registerStorage,
+  computeStats,
   type Project,
   type ProjectStorage,
   type ProjectSummary,
@@ -25,10 +26,7 @@ class PatternStudioDb extends Dexie {
 export const db = new PatternStudioDb();
 
 function toSummary(p: Project): ProjectSummary {
-  let completed = 0;
-  for (const entry of Object.values(p.progress)) {
-    if (entry.status === "completed") completed++;
-  }
+  const stats = computeStats(p.grid, p.progress);
   return {
     id: p.id,
     name: p.name,
@@ -36,8 +34,8 @@ function toSummary(p: Project): ProjectSummary {
     thumbnail: p.thumbnail,
     rows: p.grid.rows,
     cols: p.grid.cols,
-    completed_cells: completed,
-    total_cells: p.grid.cells.length,
+    completed_cells: stats.completed,
+    total_cells: stats.total_cells,
     completed: p.completed ?? false,
     last_opened_at: p.last_opened_at,
   };

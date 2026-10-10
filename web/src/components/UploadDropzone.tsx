@@ -115,7 +115,8 @@ export function UploadDropzone({ onDone }: { onDone?: () => void }) {
           <p className="dropzone-title">Drop a pattern image or PDF here</p>
           <p className="dropzone-sub">
             Everything is analyzed in your browser — the grid, symbols and
-            colours are detected on-device, no upload.
+            colours are detected on-device, no upload. Only cells with printed
+            codes count toward the pattern; blank cells are ignored.
           </p>
           <button
             type="button"
