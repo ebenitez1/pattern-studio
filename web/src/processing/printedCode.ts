@@ -18,7 +18,8 @@ export function hasPrintedCode(
   const bins = new Array<number>(16).fill(0);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     const p = ((y0 + y) * width + x0 + x) * 4;
-    const lum = 0.299 * data[p]! + 0.587 * data[p + 1]! + 0.114 * data[p + 2]!;
+    const alpha = data[p + 3]! / 255;
+    const lum = (0.299 * data[p]! + 0.587 * data[p + 1]! + 0.114 * data[p + 2]!) * alpha + 255 * (1 - alpha);
     lums[y * w + x] = lum;
     const bin = Math.min(15, Math.floor(lum / 16));
     bins[bin] = bins[bin]! + 1;
@@ -31,7 +32,11 @@ export function hasPrintedCode(
   // Dark codes on saturated fills (e.g. E13 purple) can differ by only 24–50
   // luminance levels. A high cutoff silently removes an entire colour. Keep
   // these strokes; the component geometry below rejects borders and shadows.
-  const mask = Uint8Array.from(lums, lum => Math.abs(lum - background) >= 24 ? 1 : 0);
+  // Pale checker tiles have small repeating contrast that JPEG compression
+  // can turn into glyph-sized blobs. Require darker ink on pale backgrounds,
+  // while retaining low-contrast codes on dark colours such as E13.
+  const minContrast = background > 185 ? 60 : 24;
+  const mask = Uint8Array.from(lums, lum => Math.abs(lum - background) >= minContrast ? 1 : 0);
   let strokes = 0;
   for (let i = 0; i < mask.length; i++) {
     if (mask[i] !== 1) continue;

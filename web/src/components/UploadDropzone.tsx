@@ -116,7 +116,8 @@ export function UploadDropzone({ onDone }: { onDone?: () => void }) {
           <p className="dropzone-sub">
             Everything is analyzed in your browser — the grid, symbols and
             colours are detected on-device, no upload. Only cells with printed
-            codes count toward the pattern; blank cells are ignored.
+            codes count toward the pattern; blank, transparent and checkerboard
+            tiles without codes are ignored.
           </p>
           <button
             type="button"

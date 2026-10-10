@@ -77,3 +77,20 @@ test('E13 survives symbol extraction and contributes to the stitch total',()=>{
   assert.equal(grid.symbols.length,1);
   assert.equal(computeStats(grid,{}).total_cells,1);
 });
+
+test('JPEG checkerboard tiles are blank but printed codes still count',()=>{
+  for(const crop of require('./fixtures/checker-crops.json')) assert.equal(hasPrintedCode(new Uint8ClampedArray(crop.pixels),crop.width,{x:0,y:0,w:crop.width,h:crop.height}),crop.expected,'row '+(crop.row+1)+' col '+(crop.col+1));
+});
+test('transparent pixels cannot carry a code through hidden RGB values',()=>{
+  const data=image([0,0,0],true);
+  for(let i=3;i<data.length;i+=4)data[i]=0;
+  assert.equal(hasPrintedCode(data,24,{x:0,y:0,w:24,h:24}),false);
+  const {grid}=recognizeSymbols({width:24,height:24,imageData:{width:24,height:24,data}},{colBoundaries:[0,24],rowBoundaries:[0,24]});
+  assert.equal(grid.cells[0].symbol_id,'bg');
+  assert.equal(computeStats(grid,{}).total_cells,0);
+});
+test('a visible code over a transparent background remains tracked',()=>{
+  const data=image([255,255,255],true);
+  for(let y=0;y<24;y++)for(let x=0;x<24;x++)if(x<11||x>=13||y<8||y>=15)data[(y*24+x)*4+3]=0;
+  assert.equal(hasPrintedCode(data,24,{x:0,y:0,w:24,h:24}),true);
+});
